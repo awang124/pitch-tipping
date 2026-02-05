@@ -91,11 +91,10 @@ def process_video(video_path, label):
 
 def main():
     #loop through each VIDEO_DIR subfolder of different pitch types
-    final_dir = os.path.join(VIDEO_DIR, PITCHER_NAME)
-    if not os.path.exists(final_dir):
-        raise FileNotFoundError(f"Data directory not found: {final_dir}")
-    for label in os.listdir(final_dir):
-        label_dir = os.path.join(final_dir, label)
+    if not os.path.exists(VIDEO_DIR):
+        raise FileNotFoundError(f"Data directory not found: {VIDEO_DIR}")
+    for label in os.listdir(VIDEO_DIR):
+        label_dir = os.path.join(VIDEO_DIR, label)
         if not os.path.isdir(label_dir):
             continue
 
