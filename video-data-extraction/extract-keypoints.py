@@ -26,8 +26,10 @@ from ultralytics import YOLO
 
 
 #input and output directories
-VIDEO_DIR = "data/videos"
-OUTPUT_DIR = "data/keypoints"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIDEO_DIR = os.path.join(PROJECT_ROOT, "data")
+PITCHER_NAME = "test-pitcher"
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", PITCHER_NAME, "keypoints")
 
 #sample model for now
 POSE_MODEL = "yolov8x-pose.pt"
@@ -89,8 +91,11 @@ def process_video(video_path, label):
 
 def main():
     #loop through each VIDEO_DIR subfolder of different pitch types
-    for label in os.listdir(VIDEO_DIR):
-        label_dir = os.path.join(VIDEO_DIR, label)
+    final_dir = os.path.join(VIDEO_DIR, PITCHER_NAME)
+    if not os.path.exists(final_dir):
+        raise FileNotFoundError(f"Data directory not found: {final_dir}")
+    for label in os.listdir(final_dir):
+        label_dir = os.path.join(final_dir, label)
         if not os.path.isdir(label_dir):
             continue
 
