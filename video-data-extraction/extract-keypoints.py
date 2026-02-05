@@ -27,8 +27,8 @@ from ultralytics import YOLO
 
 #input and output directories
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIDEO_DIR = os.path.join(PROJECT_ROOT, "data")
 PITCHER_NAME = "test-pitcher"
+VIDEO_DIR = os.path.join(PROJECT_ROOT, "data", PITCHER_NAME, "pitches")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", PITCHER_NAME, "keypoints")
 
 #sample model for now
