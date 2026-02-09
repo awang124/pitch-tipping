@@ -1,8 +1,12 @@
 import cv2
 import os
 import numpy as np
+import argparse
 from ultralytics import YOLO
+from dotenv import load_dotenv
 
+
+#TO RUN: video-data-extraction/extract-keypoints --pitcher <pitcher>
 
 
 # Program that takes in video from data directory (for now) 
@@ -25,16 +29,27 @@ from ultralytics import YOLO
 
 
 
-#input and output directories
-PITCHER_NAME = "test-pitcher"
-VIDEO_DIR = "SARG/pitch-tipping/data/" + PITCHER_NAME + "/pitches"
-OUTPUT_DIR = "SARG/pitch-tipping/data/" + PITCHER_NAME + "/keypoints"
+#input and output directories from .env
+load_dotenv()
+DATA_DIR = os.getenv("EXTRACTION_DATA_DIR")
+if DATA_DIR is None:
+    raise ValueError("Missing EXTRACTION_DATA_DIR in .env")
+
+#get pitcher name from arguments
+parser = argparse.ArgumentParser(description="Extract keypoints from videos.")
+parser.add_argument("--pitcher", required=True, help="Pitcher name")
+args = parser.parse_args()
+PITCHER_NAME = args.pitcher
+
+#final directories to a per pitcher basis
+VIDEO_DIR = DATA_DIR + PITCHER_NAME + "/pitches"
+OUTPUT_DIR = DATA_DIR + PITCHER_NAME + "/keypoints"
 
 #sample model for now
 POSE_MODEL = "yolov8x-pose.pt"
 
 #change based on frame rate, sample for now
-FRAME_SKIP = 2  
+FRAME_SKIP = 1
 
 
 #load YOLO model ------------------------- might change!

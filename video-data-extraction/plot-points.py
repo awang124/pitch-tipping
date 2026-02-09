@@ -1,6 +1,17 @@
 import cv2
 import numpy as np
 import os
+from dotenv import load_dotenv
+import argparse
+
+
+#TO RUN: video-data-extraction/plot-points --pitcher <pitcher> --pitch <pitch type folder> --video <video file>
+
+#load path to video
+load_dotenv()
+DATA_DIR = os.getenv("EXTRACTION_DATA_DIR")
+if DATA_DIR is None:
+    raise ValueError("EXTRACTION_DATA_DIR must be set in your .env file!")
 
 # 17-keypoint skeleton structure (COCO format for YOLOv8-pose)
 SKELETON_EDGES = [
@@ -70,10 +81,36 @@ def overlay_keypoints_on_video(video_path, npy_path, frame_skip, output_path):
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Overlay keypoints onto a video")
+    parser.add_argument("--pitcher", required=True, help="Pitcher name")
+    parser.add_argument("--pitch", required=True, help="Pitch type folder (fastball/changeup/etc)")
+    parser.add_argument("--video", required=True, help="Video filename only (not full path)")
+
+    args = parser.parse_args()
+
+    # Build paths to files
+    video_file = os.path.join(
+        DATA_DIR, args.pitcher, "pitches", args.pitch, args.video
+    )
+    video_basename = os.path.splitext(args.video)[0]
+    npy_file = os.path.join(
+        DATA_DIR, args.pitcher, "keypoints", f"{args.pitch}_{video_basename}.npy"
+    )
+    output_file = os.path.join(
+        DATA_DIR, args.pitcher, "overlays",
+        f"overlay_{args.pitch}_{args.video}"
+    )
+
+    # Validate 
+    if not os.path.exists(video_file):
+        raise FileNotFoundError(f"Video not found: {video_file}")
+
+    if not os.path.exists(npy_file):
+        raise FileNotFoundError(f"Numpy keypoints not found: {npy_file}")
+
+
     # Test usage
-    video_file = "SARG/pitch-tipping/data/test-pitcher/pitches/changeup/5182923-uhd_2160_3840_25fps.mp4"
-    npy_file = "SARG/pitch-tipping/data/test-pitcher/keypoints/changeup_5182923-uhd_2160_3840_25fps.npy"
-    frame_skip = 2
-    output_file = "SARG/pitch-tipping/data/test-pitcher/pitches/changeup/overlay.mp4"
+    frame_skip = 1
 
     overlay_keypoints_on_video(video_file, npy_file, frame_skip, output_file)

@@ -1,3 +1,5 @@
 .venv
 .vscode
 *.mp4
+.env
+*.pt
