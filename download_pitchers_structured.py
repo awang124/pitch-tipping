@@ -34,11 +34,12 @@ for json_file in os.listdir(JSON_DIR):
             pitch_speed = safe(info.get("pitchSpeed", "0mph"))
             date = safe(media.get("date", "UnknownDate"))
 
-            pitcher_folder = os.path.join(BASE_OUTPUT, pitcher_name)
-            os.makedirs(pitcher_folder, exist_ok=True)
+            # Create folder structure
+            pitch_folder = os.path.join(BASE_OUTPUT, pitcher_name, pitch_type)
+            os.makedirs(pitch_folder, exist_ok=True)
 
             filename = f"{pitch_type}_{pitch_speed}_{batter_name}_{date}.mp4"
-            output_path = os.path.join(pitcher_folder, filename)
+            output_path = os.path.join(pitch_folder, filename)
 
             if os.path.exists(output_path):
                 continue
