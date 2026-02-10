@@ -42,8 +42,9 @@ args = parser.parse_args()
 PITCHER_NAME = args.pitcher
 
 #final directories to a per pitcher basis
-VIDEO_DIR = DATA_DIR + PITCHER_NAME + "/pitches"
+VIDEO_DIR = DATA_DIR + PITCHER_NAME
 OUTPUT_DIR = DATA_DIR + PITCHER_NAME + "/keypoints"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 #sample model for now
 POSE_MODEL = "yolov8x-pose.pt"
