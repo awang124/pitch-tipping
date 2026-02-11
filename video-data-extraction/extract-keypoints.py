@@ -57,34 +57,36 @@ FRAME_SKIP = 1
 model = YOLO(POSE_MODEL)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-#extract keypoints from a single video
-def process_video(video_path, label):
+# extract keypoints from a single video
+def process_video(video_path):
 
     cap = cv2.VideoCapture(video_path)
     frame_idx = 0
     keypoint_sequence = []
 
-    #run through every frame of video
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        #skip frames if needed
+        # frame skip
         if frame_idx % FRAME_SKIP != 0:
             frame_idx += 1
             continue
 
-        #run pose model
+        # run pose detection
         results = model(frame, verbose=False)
-        kpts = results[0].keypoints
 
-        #extract pitcher position into keypoint_sequence
-        if kpts is not None and len(kpts.xy) > 0:
-            person_kpts = kpts.xy[0].cpu().numpy()
+        if results[0].keypoints is not None:
+            persons = results[0].keypoints.xy.cpu().numpy()
+
+            # pick the correct pitcher person
+            idx = pick_pitcher_person(persons, frame.shape)
+
+            # store their keypoints
+            person_kpts = persons[idx]
             keypoint_sequence.append(person_kpts)
 
-        #go next frame
         frame_idx += 1
 
     cap.release()
@@ -97,11 +99,44 @@ def process_video(video_path, label):
     #create output file to store with correct name as npy
     base = os.path.basename(video_path)
     name = os.path.splitext(base)[0]
-    out_path = os.path.join(OUTPUT_DIR, f"{label}_{name}.npy")
+    out_path = os.path.join(OUTPUT_DIR, f"{name}.npy")
     np.save(out_path, keypoint_sequence)
 
     #confirmation message
     print(f"Saved keypoints: {out_path}  shape={keypoint_sequence.shape}")
+
+#returns index of player that is most likely pitcher, closest to camera, for MLB video fitting
+def pick_pitcher_person(kpts_xy, frame_shape):
+    if len(kpts_xy) == 1:
+        return 0
+
+    h, w = frame_shape[:2]
+
+    expected_x = 0.35 * w   # tune per camera
+    x_weight = 0.4
+    y_weight = 0.6  # pitcher being lowest is most important
+
+    best_idx = 0
+    best_score = -1e18  # now maximizing score
+
+    for i, pts in enumerate(kpts_xy):
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+
+        center_x = np.nanmean(xs)
+        center_y = np.nanmean(ys)
+
+        # normalize into 0–1 scale
+        nx = 1 - abs(center_x - expected_x) / w        # higher = better
+        ny = center_y / h                              # higher = better
+
+        score = x_weight * nx + y_weight * ny
+
+        if score > best_score:
+            best_score = score
+            best_idx = i
+
+    return best_idx
 
 
 def main():
@@ -130,7 +165,7 @@ def main():
             print(f"  - {filename}")
 
             #process the video, should produce output file of data
-            process_video(video_path, label)
+            process_video(video_path)
 
 
 if __name__ == "__main__":

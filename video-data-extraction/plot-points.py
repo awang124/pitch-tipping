@@ -95,12 +95,12 @@ if __name__ == "__main__":
     )
     video_basename = os.path.splitext(args.video)[0]
     npy_file = os.path.join(
-        DATA_DIR, args.pitcher, "keypoints", f"{args.pitch}_{video_basename}.npy"
+        DATA_DIR, args.pitcher, "keypoints", f"{video_basename}.npy"
     )
     os.makedirs(os.path.join(DATA_DIR, args.pitcher, "overlays"), exist_ok=True)
     output_file = os.path.join(
         DATA_DIR, args.pitcher, "overlays",
-        f"overlay_{args.pitch}_{args.video}"
+        f"overlay_{args.video}"
     )
 
     # Validate 
