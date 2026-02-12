@@ -78,7 +78,17 @@ def process_video(video_path):
         results = model(frame, verbose=False)
 
         if results[0].keypoints is not None:
-            persons = results[0].keypoints.xy.cpu().numpy()
+            # results[0].keypoints.xy is a list of arrays, one per person
+            persons = results[0].keypoints.xy
+
+            if persons is None or len(persons) == 0:
+                print(f"[WARN] No person detected in frame {frame_idx}, skipping…")
+                frame_idx+=1
+                continue
+
+            # If you assume single-person detection
+            idx = 0  # or your selection logic
+            person_kpts = persons[idx]
 
             # pick the correct pitcher person
             idx = pick_pitcher_person(persons, frame.shape)
