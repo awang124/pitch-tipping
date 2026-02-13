@@ -51,6 +51,8 @@ for json_file in os.listdir(JSON_DIR):
                         continue
 
                     print("Downloading:", filename)
+
+                    # --------- Download using yt-dlp ---------
                     subprocess.run([
                         "yt-dlp",
                         "-f", "best",
@@ -59,6 +61,29 @@ for json_file in os.listdir(JSON_DIR):
                         "-o", output_path,
                         url
                     ])
+
+                    # --------- Auto Trim (0.5s to 4.0s) ---------
+                    trimmed_path = output_path.replace(".mp4", "_trimmed.mp4")
+
+                    subprocess.run([
+                        "ffmpeg",
+                        "-y",
+                        "-loglevel", "error",
+                        "-ss", "00:00:00.5",
+                        "-to", "00:00:04.0",
+                        "-i", output_path,
+                        "-c:v", "libx264",
+                        "-preset", "veryfast",
+                        "-crf", "23",
+                        "-c:a", "aac",
+                        "-movflags", "+faststart",
+                        trimmed_path
+                    ])
+
+                    # Replace original with trimmed version
+                    if os.path.exists(trimmed_path):
+                        os.remove(output_path)
+                        os.rename(trimmed_path, output_path)
 
                     break
                 else:
