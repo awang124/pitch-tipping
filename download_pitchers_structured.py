@@ -51,8 +51,6 @@ for json_file in os.listdir(JSON_DIR):
                         continue
 
                     print("Downloading:", filename)
-
-                    # 🔥 Use yt-dlp for ALL formats (m3u8 or mp4)
                     subprocess.run([
                         "yt-dlp",
                         "-f", "best",
