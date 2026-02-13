@@ -34,7 +34,6 @@ for json_file in os.listdir(JSON_DIR):
             pitch_speed = safe(info.get("pitchSpeed", "0mph"))
             date = safe(media.get("date", "UnknownDate"))
 
-            # Create folder structure
             pitch_folder = os.path.join(BASE_OUTPUT, pitcher_name, pitch_type)
             os.makedirs(pitch_folder, exist_ok=True)
 
@@ -53,22 +52,15 @@ for json_file in os.listdir(JSON_DIR):
 
                     print("Downloading:", filename)
 
-                    if url.endswith(".m3u8"):
-                        subprocess.run([
-                            "ffmpeg",
-                            "-loglevel", "error",
-                            "-user_agent", "Mozilla/5.0",
-                            "-headers", "Referer: https://www.mlb.com/",
-                            "-i", url,
-                            "-c", "copy",
-                            "-bsf:a", "aac_adtstoasc",
-                            output_path
-                        ])
-
-                    elif url.endswith(".mp4"):
-                        subprocess.run([
-                            "curl", "-L", "-o", output_path, url
-                        ])
+                    # 🔥 Use yt-dlp for ALL formats (m3u8 or mp4)
+                    subprocess.run([
+                        "yt-dlp",
+                        "-f", "best",
+                        "--no-part",
+                        "--add-header", "Referer: https://www.mlb.com/",
+                        "-o", output_path,
+                        url
+                    ])
 
                     break
                 else:
