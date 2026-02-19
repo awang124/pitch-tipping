@@ -41,8 +41,8 @@ def draw_skeleton(frame, keypoints):
 
 
 def overlay_keypoints_on_video(video_path, npy_path, frame_skip, output_path):
-    # load keypoints (num_frames, num_kpts, 2)
-    keypoints = np.load(npy_path)
+    # Load data as objects
+    data = np.load(npy_path, allow_pickle=True)
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -51,7 +51,6 @@ def overlay_keypoints_on_video(video_path, npy_path, frame_skip, output_path):
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Output writer
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, out_fps, (width, height))
 
@@ -65,18 +64,30 @@ def overlay_keypoints_on_video(video_path, npy_path, frame_skip, output_path):
         if not ret:
             break
 
-        # Only annotate frames that we extracted keypoints for
-        if frame_idx % frame_skip == 0:
-            if kpt_idx < len(keypoints):
-                frame = draw_skeleton(frame, keypoints[kpt_idx])
-                kpt_idx += 1
+        if frame_idx % frame_skip == 0 and kpt_idx < len(data):
+            frame_data = data[kpt_idx]
+
+            keypoints = frame_data["keypoints"]
+            glove_box = frame_data["glove_box"]
+
+            # Draw keypoints
+            frame = draw_skeleton(frame, keypoints)
+
+            # Draw glove box if valid
+            x1, y1, x2, y2 = glove_box
+            if x1 != -1:  # your "invalid" flag
+                cv2.rectangle(
+                    frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                    (0, 0, 255), 3
+                )
+
+            kpt_idx += 1
 
         out.write(frame)
         frame_idx += 1
 
     cap.release()
     out.release()
-
     print("Done!")
 
 

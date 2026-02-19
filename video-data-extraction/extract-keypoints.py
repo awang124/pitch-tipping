@@ -4,6 +4,10 @@ import numpy as np
 import argparse
 from ultralytics import YOLO
 from dotenv import load_dotenv
+import torch
+from detectron2.engine import DefaultPredictor
+from detectron2.config import get_cfg
+from detectron2 import model_zoo
 
 
 #TO RUN: video-data-extraction/extract-keypoints --pitcher <pitcher>
@@ -52,6 +56,14 @@ POSE_MODEL = "yolov8x-pose.pt"
 #change based on frame rate, sample for now
 FRAME_SKIP = 1
 
+cfg = get_cfg()
+cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5
+cfg.MODEL.ROI_HEADS.NUM_CLASSES = 80
+cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+predictor = DefaultPredictor(cfg)
+
 
 #load YOLO model ------------------------- might change!
 model = YOLO(POSE_MODEL)
@@ -86,16 +98,27 @@ def process_video(video_path):
                 frame_idx+=1
                 continue
 
-            # If you assume single-person detection
-            idx = 0  # or your selection logic
-            person_kpts = persons[idx]
+        # pick the correct pitcher person
+        idx = pick_pitcher_person(persons, frame.shape)
 
-            # pick the correct pitcher person
-            idx = pick_pitcher_person(persons, frame.shape)
+        # store their keypoints
+        person_kpts = persons[idx]
+        person_kpts = person_kpts.detach().cpu().numpy() if hasattr(person_kpts, "detach") else np.array(person_kpts)
 
-            # store their keypoints
-            person_kpts = persons[idx]
-            keypoint_sequence.append(person_kpts)
+        #pitcher bounding box
+        x_min, y_min = np.min(person_kpts, axis=0)
+        x_max, y_max = np.max(person_kpts, axis=0)
+        pitcher_box = [x_min, y_min, x_max, y_max]
+
+        # run glove detection 
+        glove_box = detect_pitcher_glove(frame, pitcher_box)
+        if glove_box is None:
+            glove_box = [-1, -1, -1, -1]
+
+        keypoint_sequence.append({
+            "keypoints": person_kpts,
+            "glove_box": glove_box
+        })
 
         frame_idx += 1
 
@@ -147,6 +170,36 @@ def pick_pitcher_person(kpts_xy, frame_shape):
             best_idx = i
 
     return best_idx
+
+
+def detect_pitcher_glove(frame, pitcher_box=None):
+    # Detect glove near pitcher using Detectron2.
+    outputs = predictor(frame)
+    instances = outputs["instances"].to("cpu")
+    boxes = instances.pred_boxes.tensor.numpy()
+    classes = instances.pred_classes.numpy()
+
+    # Keep only baseball gloves (class 35)
+    glove_candidates = [b for b, c in zip(boxes, classes) if c == 35]
+    if not glove_candidates:
+        return None
+
+    # If pitcher box provided, choose glove closest to pitcher
+    if pitcher_box is not None:
+        px1, py1, px2, py2 = pitcher_box
+        pitcher_center = ((px1 + px2)/2, (py1 + py2)/2)
+
+        def distance_to_pitcher(box):
+            x1, y1, x2, y2 = box
+            glove_center = ((x1 + x2)/2, (y1 + y2)/2)
+            return np.linalg.norm(np.array(glove_center) - np.array(pitcher_center))
+
+        best_glove = min(glove_candidates, key=distance_to_pitcher)
+    else:
+        # fallback: largest glove box
+        best_glove = max(glove_candidates, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
+
+    return [int(coord) for coord in best_glove]
 
 
 def main():
