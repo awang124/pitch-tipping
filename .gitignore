@@ -2,7 +2,12 @@
 .vscode
 *.mp4
 .env
-*.mp4
+*.mov
 *.m3u8
 *.ts
 *.pt
+*.jpg
+*.json
+datasets
+baseball_glove
+runs/detect

@@ -81,6 +81,7 @@ def process_video(video_path):
         if not ret:
             break
 
+        print(frame_idx)
         # frame skip
         if frame_idx % FRAME_SKIP != 0:
             frame_idx += 1
@@ -114,6 +115,8 @@ def process_video(video_path):
         glove_box = detect_pitcher_glove(frame, pitcher_box)
         if glove_box is None:
             glove_box = [-1, -1, -1, -1]
+            print(f"[WARN] No glove detected at frame {frame_idx}")
+
 
         keypoint_sequence.append({
             "keypoints": person_kpts,
