@@ -25,10 +25,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # YOLO MODELS ----------------------------
 POSE_MODEL = "yolov8x-pose.pt"
-GLOVE_MODEL = "runs/detect/train4/weights/best.pt"   # trained glove model
 
 pose_model = YOLO(POSE_MODEL)
-glove_model = YOLO(GLOVE_MODEL)
 
 FRAME_PRINT = 100
 
@@ -63,37 +61,6 @@ def pick_pitcher_person(kpts_xy, frame_shape):
             best_idx = i
 
     return best_idx
-
-
-# detect glove using our YOLO model
-def detect_glove_yolo(frame, pitcher_box=None):
-    results = glove_model(frame, verbose=False)[0]
-
-    if results.boxes is None or len(results.boxes) == 0:
-        return None
-
-    boxes = results.boxes.xyxy.cpu().numpy()
-    classes = results.boxes.cls.cpu().numpy()
-
-    # Class 0 = glove
-    glove_boxes = [b for b, c in zip(boxes, classes) if c == 0]
-    if not glove_boxes:
-        return None
-
-    # If no pitcher box, return largest glove box
-    if pitcher_box is None:
-        return list(map(int, glove_boxes[0]))
-
-    px1, py1, px2, py2 = pitcher_box
-    pitcher_center = ((px1 + px2) / 2, (py1 + py2) / 2)
-
-    def dist(box):
-        x1, y1, x2, y2 = box
-        glove_center = ((x1 + x2) / 2, (y1 + y2) / 2)
-        return np.linalg.norm(np.array(glove_center) - np.array(pitcher_center))
-
-    best_box = min(glove_boxes, key=dist)
-    return [int(v) for v in best_box]
 
 
 def process_video(video_path):
@@ -132,18 +99,10 @@ def process_video(video_path):
         # Compute pitcher bounding box
         x_min, y_min = np.min(person_kpts, axis=0)
         x_max, y_max = np.max(person_kpts, axis=0)
-        pitcher_box = [x_min, y_min, x_max, y_max]
-
-        glove_box = detect_glove_yolo(frame, pitcher_box)
-        if glove_box is None:
-            glove_box = [-1, -1, -1, -1]
-            print(f"[WARN] No glove detected at frame {frame_idx}")
-
 
 
         keypoint_sequence.append({
             "keypoints": person_kpts,
-            "glove_box": glove_box
         })
 
         frame_idx += 1
