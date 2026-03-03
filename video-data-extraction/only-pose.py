@@ -101,9 +101,7 @@ def process_video(video_path):
         x_max, y_max = np.max(person_kpts, axis=0)
 
 
-        keypoint_sequence.append({
-            "keypoints": person_kpts,
-        })
+        keypoint_sequence.append(person_kpts)
 
         frame_idx += 1
 
