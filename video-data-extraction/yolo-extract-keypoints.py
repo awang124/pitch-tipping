@@ -19,13 +19,13 @@ parser.add_argument("--pitcher", required=True, help="Pitcher name")
 args = parser.parse_args()
 PITCHER_NAME = args.pitcher
 
-VIDEO_DIR = os.path.join(DATA_DIR, PITCHER_NAME)
+VIDEO_DIR = os.path.join(DATA_DIR, PITCHER_NAME, "pitches")
 OUTPUT_DIR = os.path.join(DATA_DIR, PITCHER_NAME, "keypoints")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # YOLO MODELS ----------------------------
 POSE_MODEL = "yolov8x-pose.pt"
-GLOVE_MODEL = "runs/detect/train4/weights/best.pt"   # trained glove model
+GLOVE_MODEL = "best2.pt"   # trained glove model
 
 pose_model = YOLO(POSE_MODEL)
 glove_model = YOLO(GLOVE_MODEL)

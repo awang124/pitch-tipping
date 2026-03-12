@@ -102,7 +102,7 @@ if __name__ == "__main__":
 
     # Build paths to files
     video_file = os.path.join(
-        DATA_DIR, args.pitcher, args.pitch, args.video
+        DATA_DIR, args.pitcher, "pitches", args.pitch, args.video
     )
     video_basename = os.path.splitext(args.video)[0]
     npy_file = os.path.join(

@@ -4,6 +4,7 @@ import argparse
 from tqdm import tqdm
 from collections import defaultdict
 from PIL import Image
+import shutil
 
 # -----------------------------------------------------------
 # COCO → YOLO Converter
@@ -90,7 +91,7 @@ def main(json_path, images_dir, out_dir):
         out_label_path = f"{out_dir}/{split}/labels/{filename.replace('.jpg', '.txt').replace('.png', '.txt')}"
 
         # Copy image
-        os.system(f"cp '{img_path}' '{out_img_path}'")
+        shutil.copy(img_path, out_img_path)
 
         # Write label file
         lines = []
@@ -130,3 +131,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args.json, args.images, args.out)
+
+#AFTER RUNNING TO TRAIN YOLO RUN THIS: yolo detect train data="path/to/data.yaml" model=yolov8n.pt epochs=100 imgsz=640 batch=16
