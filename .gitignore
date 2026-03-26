@@ -11,3 +11,4 @@
 datasets
 baseball_glove
 runs/detect
+*.npy

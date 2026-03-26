@@ -1,100 +1,88 @@
-import os
+import argparse
+
 from dotenv import load_dotenv
 import numpy as np
-import cv2
-from scipy.signal import find_peaks
+import os
+import glob
 
-# -------------------------
-# CONFIG
-# -------------------------
-LEFT_KNEE = 13
-RIGHT_KNEE = 14
 
-SQUARE_SIZE = 150
-COLOR = (0, 0, 255)   # Red square
-THICKNESS = 6
 
-# -------------------------
-# LOAD ENV + NPY
-# -------------------------
 load_dotenv()
-BASE_DIR = os.getenv("EXTRACTION_DATA_DIR")
-if BASE_DIR is None:
+DATA_DIR = os.getenv("EXTRACTION_DATA_DIR")
+if DATA_DIR is None:
     raise ValueError("Missing EXTRACTION_DATA_DIR in .env")
 
-NPY_PATH = os.path.join(BASE_DIR, "kieran/keypoints/IMG_6116.npy")
-VIDEO_PATH = os.path.join(BASE_DIR, "kieran/Four-Seam-Fastball/IMG_6116.mov")
-OUTPUT_PATH = os.path.join(BASE_DIR, "kieran/knee_up_vid/IMG_6116.mov")
+parser = argparse.ArgumentParser(description="Extract keypoints from videos.")
+parser.add_argument("--pitcher", required=True, help="Pitcher name")
+args = parser.parse_args()
+PITCHER_NAME = args.pitcher
 
-print("Loading:", NPY_PATH)
-data = np.load(NPY_PATH)  # shape: (frames, 17, 2)
-frame_count = data.shape[0]
+NPY_DIR = os.path.join(DATA_DIR, PITCHER_NAME, "keypoints")
+OUTPUT_DIR = os.path.join(DATA_DIR, PITCHER_NAME, "trimmed_keypoints")
 
-# -------------------------
-# FIND PEAK FRAMES
-# -------------------------
-def find_knee_peak(knee_y):
-    smooth = np.convolve(knee_y, np.ones(5)/5, mode='same')
-    inv = -smooth
-    peaks, _ = find_peaks(inv, prominence=3, distance=5)
-    return int(peaks[0]) if len(peaks) > 0 else None
+def find_knee_apex(sequence):
+    """
+    Finds the frame index where the knee is highest (minimum Y).
+    Expects a list/array of dictionaries with a 'keypoints' key.
+    """
+    highest_y = float('inf')
+    apex_idx = 0
 
-# left knee
-knee_yl = data[:, LEFT_KNEE, 1]
-left_peak = find_knee_peak(knee_yl)
-print("Left knee peak frame:", left_peak)
+    for i, frame_data in enumerate(sequence):
+        # Extract the keypoints array (17, 2) from the dictionary
+        kpts = frame_data["keypoints"]
+        
+        # YOLO/COCO Indices: 13 (Left Knee), 14 (Right Knee)
+        # kpts[idx, 1] is the Y coordinate
+        lk_y = kpts[13, 1]
+        rk_y = kpts[14, 1]
 
-# right knee
-knee_yr = data[:, RIGHT_KNEE, 1]
-right_peak = find_knee_peak(knee_yr)
-print("Right knee peak frame:", right_peak)
+        # Filter out 0.0 (undetected)
+        current_min = min([y for y in [lk_y, rk_y] if y > 0] or [float('inf')])
 
-# -------------------------
-# OPEN VIDEO FOR DRAWING
-# -------------------------
-cap = cv2.VideoCapture(VIDEO_PATH)
-if not cap.isOpened():
-    raise RuntimeError("Could not open video at " + VIDEO_PATH)
+        if current_min < highest_y:
+            highest_y = current_min
+            apex_idx = i
 
-fps = cap.get(cv2.CAP_PROP_FPS)
-w  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-h  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    return apex_idx
 
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-out = cv2.VideoWriter(OUTPUT_PATH, fourcc, fps, (w, h))
+def process_and_trim(window_size=100):
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
 
-frame_index = 0
+    # Find all .npy files
+    files = glob.glob(os.path.join(NPY_DIR, "*.npy"))
 
-print("Processing video...")
+    for file_path in files:
+        # allow_pickle=True is required because you saved a list of dictionaries
+        sequence = np.load(file_path, allow_pickle=True)
+        
+        if len(sequence) == 0:
+            continue
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+        apex_idx = find_knee_apex(sequence)
+        
+        # --- WINDOW CALCULATION ---
+        # Calculate start and end with 'clamping' to stay within array bounds
+        start_frame = max(0, apex_idx - window_size)
+        end_frame = min(len(sequence), apex_idx + window_size - (window_size // 2))
+        
+        # Slice the 200-frame (approx) chunk
+        trimmed_sequence = sequence[start_frame:end_frame]
+        
+        # Save output
+        file_name = os.path.basename(file_path)
+        out_path = os.path.join(OUTPUT_DIR, f"trimmed_{file_name}")
+        np.save(out_path, trimmed_sequence)
+        
+        print(f"File name: {file_name}  - Apex Frame: {apex_idx}")
 
-    # Draw square for LEFT knee
-    if left_peak is not None and frame_index == left_peak:
-        x, y = data[frame_index, LEFT_KNEE]
-        x1 = int(x - SQUARE_SIZE // 2)
-        y1 = int(y - SQUARE_SIZE // 2)
-        x2 = int(x + SQUARE_SIZE // 2)
-        y2 = int(y + SQUARE_SIZE // 2)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR, THICKNESS)
+def main():
+    # Update these paths to match your extraction output
 
-    # Draw square for RIGHT knee
-    if right_peak is not None and frame_index == right_peak:
-        x, y = data[frame_index, RIGHT_KNEE]
-        x1 = int(x - SQUARE_SIZE // 2)
-        y1 = int(y - SQUARE_SIZE // 2)
-        x2 = int(x + SQUARE_SIZE // 2)
-        y2 = int(y + SQUARE_SIZE // 2)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR, THICKNESS)
+    print("Starting Knee-Apex Trimming...")
+    process_and_trim()
+    print("Done!")
 
-    out.write(frame)
-    frame_index += 1
-
-cap.release()
-out.release()
-
-print("Done!")
-print("Saved output video →", OUTPUT_PATH)
+if __name__ == "__main__":
+    main()
