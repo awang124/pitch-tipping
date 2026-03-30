@@ -6,7 +6,7 @@ from ultralytics import YOLO
 from dotenv import load_dotenv
 
 # TO RUN:
-# python extract-keypoints.py --pitcher <pitcher>
+# python only-pose.py --pitcher <pitcher>
 
 load_dotenv()
 DATA_DIR = os.getenv("EXTRACTION_DATA_DIR")

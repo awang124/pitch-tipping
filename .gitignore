@@ -5,10 +5,12 @@
 *.mov
 *.m3u8
 *.ts
-*.pt
+yolov8x-pose.pt
+yolov8n.pt
 *.jpg
 *.json
 datasets
 baseball_glove
 runs/detect
 *.npy
+*.yaml
