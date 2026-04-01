@@ -48,7 +48,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 from dotenv import load_dotenv
- 
+from diagnostics import sanity_check_feature, cross_validate
  
 # ---------------------------------------------------------------------------
 # COCO 17-keypoint index reference
@@ -372,6 +372,9 @@ def main():
     print(f"\nTop {args.top_features} most important features:")
     print(classifier.feature_importance_report(top_n=args.top_features))
  
+    sanity_check_feature(X, y, feature_names=classifier.feature_names, feature="f029_r_wrist_y")
+    print(cross_validate(classifier, X, y))
+
     # ---- Export tree ----
     if args.model == "tree":
         print()

@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import numpy as np
 import argparse
 
-# TO RUN:
+# RUN THIS BEFORE TRIMMING TO NORMALIZE KEYPOINTS WITH BACK FOOT AS ORIGIN:
 # python normalize_keypoints.py --pitcher <pitcher>
 
 # ---------------- ARGUMENTS ----------------

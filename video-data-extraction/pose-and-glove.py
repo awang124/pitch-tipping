@@ -24,8 +24,8 @@ OUTPUT_DIR = os.path.join(DATA_DIR, PITCHER_NAME, "keypoints")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # YOLO MODELS ----------------------------
-POSE_MODEL = "models/yolov8x-pose.pt"
-GLOVE_MODEL = "models/best2.pt"   # trained glove model
+POSE_MODEL = "cv-models/yolov8x-pose.pt"
+GLOVE_MODEL = "cv-models/best2.pt"   # trained glove model
 
 pose_model = YOLO(POSE_MODEL)
 glove_model = YOLO(GLOVE_MODEL)

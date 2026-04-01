@@ -1,4 +1,7 @@
 |--- f029_r_wrist_y <= -83.37
-|   |--- class: 1
+|   |--- f105_r_wrist_y <= -95.35
+|   |   |--- class: 1
+|   |--- f105_r_wrist_y >  -95.35
+|   |   |--- class: 0
 |--- f029_r_wrist_y >  -83.37
 |   |--- class: 0

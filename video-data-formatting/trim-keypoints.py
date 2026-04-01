@@ -5,6 +5,9 @@ import os
 import numpy as np
 from dotenv import load_dotenv
  
+#RUN THIS AFTER NORMALIZING KEYPOINTS TO TRIM SEQUENCES TO A FIXED WINDOW AROUND THE KNEE APEX:
+#python trim-keypoints.py --pitcher <pitcher>
+
 load_dotenv()
 DATA_DIR = os.getenv("EXTRACTION_DATA_DIR")
 if DATA_DIR is None:
