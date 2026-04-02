@@ -170,7 +170,7 @@ def make_feature_names(n_frames: int) -> list[str]:
 # ---------------------------------------------------------------------------
  
 def label_from_filename(path: str) -> int:
-    """1 if filename contains 'fastball' (case-insensitive), else 0."""
+    """1 if filename contains 'fastball' or 'cutter' (case-insensitive), else 0."""
     return 1 if "fastball" in os.path.basename(path).lower() else 0
  
  
