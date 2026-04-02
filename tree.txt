@@ -1,7 +1,0 @@
-|--- f028_r_wrist_y <= -84.51
-|   |--- class: 1
-|--- f028_r_wrist_y >  -84.51
-|   |--- f115_shoulder_width <= 11.41
-|   |   |--- class: 1
-|   |--- f115_shoulder_width >  11.41
-|   |   |--- class: 0

@@ -1,6 +1,4 @@
 """
-pitch_classifier.py
-====================
 Decision-tree-based classifier that predicts whether a pitch is a fastball
 from numpy keypoint-sequence files.
  
@@ -32,11 +30,6 @@ Feature strategy:
         l_wrist_x, l_wrist_y
  
     Total features: 15 * N_FRAMES (e.g. 15 * 200 = 3000)
- 
-Usage:
-    python pitch_classifier.py --pitcher shohei_ohtani
-    python pitch_classifier.py --pitcher shohei_ohtani --model rf --test-size 0.25
-    python pitch_classifier.py --pitcher shohei_ohtani --model tree --tree-out results/tree.txt
 """
  
 import os
@@ -383,3 +376,4 @@ def main():
  
 if __name__ == "__main__":
     main()
+

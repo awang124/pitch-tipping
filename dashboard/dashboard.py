@@ -858,10 +858,10 @@ with tab3:
         with st.spinner("Training models and extracting feature importance..."):
             try:
                 import importlib
-                import train_classifier
-                importlib.reload(train_classifier)
+                import dashboard__classifier
+                importlib.reload(dashboard_classifier)
                 keypoints_path = os.path.join(base_dir, "Keypoints")
-                results = train_classifier.train_models(keypoints_path)
+                results = dashboard_classifier.train_models(keypoints_path)
                 
                 if "error" in results:
                     st.error(results["error"])
@@ -885,6 +885,7 @@ with tab3:
 
                     
                     st.markdown("<div class='section-label' style='margin-top:2rem;'>📊 Pairwise Statistical Significance (Fastball vs. Offspeed)</div>", unsafe_allow_html=True)
+
                     import pandas as pd
                     # ── HARDCODED FALLBACK FROM NOTEBOOK EMPIRICAL RESULTS (FASTBALL VS OFFSPEED) ──
                     static_stats = [
