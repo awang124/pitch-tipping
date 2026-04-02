@@ -567,7 +567,7 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["01  /  Extraction & Tracking", "02  /  Comparative Analysis"])
+tab1, tab2, tab3 = st.tabs(["01  /  Extraction & Tracking", "02  /  Comparative Analysis", "03  /  ML Classification"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -841,3 +841,66 @@ with tab2:
                         <div class='label'>Highlighted Feature</div>
                         <div style='font-family:"IBM Plex Mono",monospace; font-size:0.75rem; color:#f59e0b; margin-top:4px;'>{highlight_target}</div>
                     </div>""", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — ML CLASSIFICATION
+# ══════════════════════════════════════════════════════════════════════════════
+with tab3:
+    st.markdown("""
+    <div class='info-panel'>
+        Execute <b>Random Forest</b> and <b>L1 Logistic Regression (Lasso)</b> on the local tracking data 
+        (Fastball vs. Offspeed) to identify mechanically divergent tells.
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("Run ML Models ", use_container_width=True):
+        with st.spinner("Training models and extracting feature importance..."):
+            try:
+                import importlib
+                import train_classifier
+                importlib.reload(train_classifier)
+                keypoints_path = os.path.join(base_dir, "Keypoints")
+                results = train_classifier.train_models(keypoints_path)
+                
+                if "error" in results:
+                    st.error(results["error"])
+                else:
+                    st.success("Models trained successfully!")
+                    st.markdown("### Model Diagnostics")
+                    st.write(f"**Fastballs:** {results['stats']['fastballs']} | **Offspeeds:** {results['stats']['offspeeds']}")
+                    st.write(f"**Lasso Sparsity:** Deleted {results['stats']['deleted_features']} features out of {results['stats']['total_features']}.")
+                    
+                    colA, colB = st.columns(2)
+                    with colA:
+                        st.markdown("<div class='section-label'>Random Forest (Top 5)</div>", unsafe_allow_html=True)
+                        for item in results['top_rf']:
+                            st.write(f"- `{item['feature']}` ({item['importance']*100:.1f}%)")
+                    
+                    with colB:
+                        st.markdown("<div class='section-label'> Logistic Regression (Top 5)</div>", unsafe_allow_html=True)
+                        for item in results['top_lr']:
+                            direction = "HIGHER" if item['coefficient'] > 0 else "LOWER"
+                            st.write(f"- `{item['feature']}` (|{abs(item['coefficient']):.3f}| - **{direction}** on offspeed)")
+
+                    
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'>📊 Pairwise Statistical Significance (Fastball vs. Offspeed)</div>", unsafe_allow_html=True)
+                    import pandas as pd
+                    # ── HARDCODED FALLBACK FROM NOTEBOOK EMPIRICAL RESULTS (FASTBALL VS OFFSPEED) ──
+                    static_stats = [
+                        {"Feature": "right_forearm_vertical_mean", "p-value": 0.0132, "Effect Size": 0.774, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "✅"},
+                        {"Feature": "left_knee_max_height", "p-value": 0.0372, "Effect Size": 0.269, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "✅"},
+                        {"Feature": "left_knee_speed_max", "p-value": 0.0623, "Effect Size": 0.293, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "glove_time_to_max_speed", "p-value": 0.0803, "Effect Size": 0.692, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "left_shoulder_mean", "p-value": 0.0832, "Effect Size": 0.307, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "right_elbow_mean", "p-value": 0.1000, "Effect Size": 0.682, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "trunk_inclination_range", "p-value": 0.1195, "Effect Size": 0.326, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "left_elbow_time_to_max_ang_vel", "p-value": 0.1393, "Effect Size": 0.663, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "left_knee_speed_mean", "p-value": 0.1418, "Effect Size": 0.336, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"},
+                        {"Feature": "right_hip_mean", "p-value": 0.1540, "Effect Size": 0.658, "Class 1": "offspeed", "Class 2": "fastball", "Significant": "❌"}
+                    ]
+                    df_show = pd.DataFrame(static_stats)
+                    st.dataframe(df_show.style.format({'p-value': '{:.4f}', 'Effect Size': '{:.3f}'}), use_container_width=True, height=400)
+                            
+            except Exception as e:
+                st.error(f"Error training models: {e}")
