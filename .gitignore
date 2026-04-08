@@ -6,12 +6,9 @@ __pycache__/
 
 # Data & Output (Massive Binary Files)
 Pitches/
-Keypoints/
 Visualizations/
-pitcher_clips/
 datasets/
 runs/
-*.npy
 *.mov
 *.mp4
 *.avi
