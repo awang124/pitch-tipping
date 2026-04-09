@@ -1,36 +1,29 @@
-# Virtual Environments
+# VIRTUAL ENVIRONMENTS
+env/
 venv/
 .venv/
-env/
 __pycache__/
 
-# Data & Output (Massive Binary Files)
-Pitches/
-Visualizations/
+# DATA / OUTPUT
 datasets/
+Pitches/
 runs/
+Visualizations/
+*.avi
+*.jpg
+*.json
+*.m3u8
 *.mov
 *.mp4
-*.avi
-*.ts
-*.m3u8
-*.jpg
 *.png
-*.json
 *.pt
+*.ts
 *.yaml
 
-# Models
-yolov8x-pose.pt
-best2.pt
-yolov8n.pt
-
-# System & IDE
+# SYSTEM / IDE
 .DS_Store
-.vscode/
+.env/
 .idea/
-.env
-
-# Jupyter
 .ipynb_checkpoints/
-baseball_glove/
+.vscode/
+
