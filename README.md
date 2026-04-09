@@ -10,12 +10,12 @@ Pitch tipping occurs when a pitcher inadvertently reveals the type of pitch thro
 - Generating side‑by‑side DTW‑aligned animations that highlight mechanical differences between pitch types.
 
 ### Pipeline
-1. Pose Estimation (`pose\_estimation.py`): Runs YOLOv8x‑pose on each frame, identifies the pitcher, detects glove box, and saves raw keypoints.
-2. Sequence Truncation (`pose\_estimation.py`): Finds pitch release frame using wrist‑shoulder horizontal motion, then keeps the last 180 frames (~3 sec at 60 fps).
-3. Feature Extraction (`pitch\_classification.py`): Extracts 100+ kinematic features: joint angles, angular velocities, linear speeds, symmetry ratios, glove trajectories, etc.
-4. Statistical Testing (`pitch\_classification.py`): Mann‑Whitney U tests (Bonferroni corrected) to find features that differ significantly between pitch types.
-5. Machine Learning (`pitch\_classification.py`): Trains Random Forest and L1‑logistic regression to classify fastball vs. off‑speed; reports feature importances.
-6. Visualization (`pose\_visualization.py`): Aligns two pitch sequences via DTW, spatially registers them using RANSAC, and renders a superimposed video.
+1. Pose Estimation (`pose_estimation.py`): Runs YOLOv8x‑pose on each frame, identifies the pitcher, detects glove box, and saves raw keypoints.
+2. Sequence Truncation (`pose_estimation.py`): Finds pitch release frame using wrist‑shoulder horizontal motion, then keeps the last 180 frames (~3 sec at 60 fps).
+3. Feature Extraction (`pitch_classification.py`): Extracts 100+ kinematic features: joint angles, angular velocities, linear speeds, symmetry ratios, glove trajectories, etc.
+4. Statistical Testing (`pitch_classification.py`): Mann‑Whitney U tests (Bonferroni corrected) to find features that differ significantly between pitch types.
+5. Machine Learning (`pitch_classification.py`): Trains Random Forest and L1‑logistic regression to classify fastball vs. off‑speed; reports feature importances.
+6. Visualization (`pose_visualization.py`): Aligns two pitch sequences via DTW, spatially registers them using RANSAC, and renders a superimposed video.
 7. Dashboard (IN PROGRESS) (`dashboard/`): Streamlit app for uploading videos, running extraction, comparing pitches, and viewing ML results.
 8. Decision Tree (IN PROGRESS) (`experimental/`): Per‑frame feature extraction (15 per frame) and interpretable decision tree for fastball/other classification.
 
@@ -59,7 +59,7 @@ python pitch_classification.py
 ```
 
 Inside Dashboard (Recommended):  
-Go to ML modeling tab, dashboard will call `dashboard\_classifier.py`, and display top features & model results.
+Go to ML modeling tab, dashboard will call `dashboard_classifier.py`, and display top features & model results.
 
 3. Visualization
 
