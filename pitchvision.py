@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="PitchVision | SARG @ JHU",
     page_icon="⚾",
     layout="wide",
-    initial_sidebar_side="expanded"
+    initial_sidebar_state="expanded"
 )
 
 st.markdown(
@@ -675,7 +675,9 @@ with tab2:
                     "<div class='section-label' style='margin-top:1.5rem;'>Output</div>",
                     unsafe_allow_html=True
                 )
+                print(os.path.exists(web_video))
                 st.video(target := web_video if os.path.exists(web_video) else out_video)
+                print(target)
                 r1, r2, r3 = st.columns(3)
                 with r1:
                     st.markdown(
@@ -717,47 +719,45 @@ with tab3:
     )
     if st.button("Run ML Models", use_container_width=True):
         with st.spinner("Training models and extracting feature importance:"):
-            try:
-                relabel = dict.fromkeys(
-                    ["cutter", "four_seam_fastball", "two_seam_fastball"], "fastball"
-                )
-                relabel.update(dict.fromkeys(
-                    ["changeup", "curveball", "slider", "splitter"], "offspeed"
-                ))
-                seqs = t3.loadSequences(keypoints_path := os.path.join(base_dir, "Keypoints"))
-                seqs = [(pair[0], relabel[pair[1]]) for pair in seqs]
-                features = pd.DataFrame([t3.extractFeatures(seq, label) for seq, label in seqs])
-                mann_whitney = t3.mannWhitney(features)
-                logistic_regression = t3.ogisticRegression(features)
-                decision_tree = t3.decisionTree(features)
-                st.success("Models trained successfully!")
-                colA, colB = st.columns(2)
-                with colA:
-                    st.markdown(
-                        "<div class='section-label'>Decision Tree (Top 5)</div>",
-                        unsafe_allow_html=True
-                    )
-                    for item in decision_tree:
-                        st.write(f"- `{item["Feature"]}` ({item["Importance"] * 100:.1f}%)")
-                with colB:
-                    st.markdown(
-                        "<div class='section-label'> Logistic Regression (Top 5)</div>",
-                        unsafe_allow_html=True
-                    )
-                    for item in logistic_regression:
-                        direction = "HIGHER" if item["Coefficient"] > 0 else "LOWER"
-                        st.write(
-                            f"- `{item["feature"]}` (|{abs(item["Coefficient"]):.3f}|"
-                            " - **{direction}** on offspeed)"
-                        )
+            relabel = dict.fromkeys(
+                ["cutter", "fastball", "four_seam_fastball", "two_seam_fastball"], "fastball"
+            )
+            relabel.update(dict.fromkeys(
+                ["changeup", "curveball", "offspeed", "slider", "splitter"], "offspeed"
+            ))
+            seqs = t3.loadSequences(keypoints_path := os.path.join(base_dir, "Keypoints"))
+            seqs = [(pair[0], relabel[pair[1]]) for pair in seqs if pair[1] != "other"]
+            features = pd.DataFrame([t3.extractFeatures(seq, label) for seq, label in seqs])
+            print(features.shape, features.head())
+            mann_whitney = t3.mannWhitney(features)
+            logistic_regression = t3.logisticRegression(features)
+            decision_tree = t3.decisionTree(features)
+            st.success("Models trained successfully!")
+            colA, colB = st.columns(2)
+            with colA:
                 st.markdown(
-                    "<div class='section-label' style='margin-top:2rem;'>📊 Pairwise Statistical Significance (Fastball vs. Offspeed)</div>",
+                    "<div class='section-label'>Decision Tree (Top 5)</div>",
                     unsafe_allow_html=True
                 )
-                st.dataframe(
-                    mann_whitney.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
-                    use_container_width=True, height=400
+                for item in decision_tree:
+                    st.write(f"- `{item["Feature"]}` ({item["Importance"] * 100:.1f}%)")
+            with colB:
+                st.markdown(
+                    "<div class='section-label'> Logistic Regression (Top 5)</div>",
+                    unsafe_allow_html=True
                 )
-            except Exception as e:
-                st.error(f"Error training models: {e}")
+                for item in logistic_regression:
+                    direction = "HIGHER" if item["Coefficient"] > 0 else "LOWER"
+                    st.write(
+                        f"- `{item["Feature"]}` (abs val = {abs(item["Coefficient"]):.3f}"
+                        f" - **{direction}** on offspeed)"
+                    )
+            st.markdown(
+                "<div class='section-label' style='margin-top:2rem;'>📊 Pairwise Statistical Significance (Fastball vs. Offspeed)</div>",
+                unsafe_allow_html=True
+            )
+            st.dataframe(
+                mann_whitney.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
+                hide_index=True, use_container_width=True, height=400
+            )
 

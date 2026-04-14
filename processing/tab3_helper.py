@@ -179,7 +179,7 @@ def loadSequences(root):
         for f in filenames:
             if not f.lower().endswith(".npy"):
                 continue
-            elif "unlabeled" in name := f.lower():
+            elif "unlabeled" in (name := f.lower()):
                 continue
             elif "changeup" in name:
                 label = "changeup"
@@ -187,18 +187,18 @@ def loadSequences(root):
                 label = "curveball"
             elif "cutter" in name:
                 label = "cutter"
-            elif "fastball" in name:
-                label = "fastball"
             elif "four_seam_fastball" in name:
                 label = "four_seam_fastball"
-            elif "offspeed" in name:
-                label = "offspeed"
             elif "slider" in name:
                 label = "slider"
             elif "splitter" in name:
                 label = "splitter"
             elif "two_seam_fastball" in name:
                 label = "two_seam_fastball"
+            elif "fast" in name:
+                label = "fastball"
+            elif "off" in name:
+                label = "offspeed"
             else:
                 label = "other"
             seqs.append((np.load(os.path.join(dirpath, f), allow_pickle=True), label))
@@ -207,7 +207,7 @@ def loadSequences(root):
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 # FEATURE SIGNIFICANCE (MANN-WHITNEY TEST)
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
-def mannWhitney(df, alpha=0.05, n_show=5):
+def mannWhitney(df, alpha=0.05, n_show=10):
     classes = df["class"].unique()
     pairs = list(combinations(classes, 2))
     res = []
@@ -246,7 +246,7 @@ def logisticRegression(df, n_show=5):
     y = df["class"]
     X = StandardScaler().fit_transform(X)
     coefs = LogisticRegression(
-        penalty="l1", solver="liblinear", C=0.5, class_weight="balanced", random_state=0
+        l1_ratio=1, solver="liblinear", C=0.5, class_weight="balanced", random_state=0
     ).fit(X, y).coef_[0]
     idxs = sorted(
         np.where(coefs != 0)[0], key=lambda i: abs(coefs[i]), reverse=True
@@ -261,6 +261,7 @@ def decisionTree(df, n_show=5):
     coefs = DecisionTreeClassifier(
         max_depth=10, class_weight="balanced", random_state=0
     ).fit(X, y).feature_importances_
-    idxs = np.argsort(coefs)[::-1][:n_show]
+    idxs = np.argsort(coefs)[::-1]
+    idxs = [i for i in idxs if coefs[i] > 0][:n_show]
     return [{"Feature": df.columns[i], "Importance": coefs[i]} for i in idxs]
 

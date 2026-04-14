@@ -28,10 +28,10 @@ def scorePitch(file, feature_grp):
     try:
         if not len(data := np.load(file, allow_pickle=True)):
             return 0
-        if "glove" in feat := feature_grp.split(" (")[0].lower().replace(" ", "_"):
-            if not valid_gloves := [
+        if "glove" in (feat := feature_grp.split(" (")[0].lower().replace(" ", "_")):
+            if not (valid_gloves := [
                 d["glove_box"] for d in data if "glove_box" in d.keys()
-            ]:
+            ]):
                 return 0
             if not len(g_centers := np.array([
                 ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in valid_gloves
