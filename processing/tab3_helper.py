@@ -1,11 +1,13 @@
 import os
+import glob
 import numpy as np
 import scipy as sc
 import pandas as pd
 from itertools import combinations
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
 
 LEFT_SHOULDER  = 5
 RIGHT_SHOULDER = 6
@@ -21,7 +23,7 @@ LEFT_ANKLE     = 15
 RIGHT_ANKLE    = 16
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
-# FEATURE EXTRACTION
+# FEATURE EXTRACTION (FOR STAT)
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 def _time_to_peak(series):
     return np.argmax(series) / len(series) if len(series) else np.nan
@@ -238,30 +240,123 @@ def mannWhitney(df, alpha=0.05, n_show=10):
     ).head(n_show)
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
-# PITCH CLASSIFICATION
+# FEATURE EXTRACTION (FOR ML)
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
-def logisticRegression(df, n_show=5):
-    X = df.drop(columns=["class"])
-    X = X.fillna(X.median())
-    y = df["class"]
-    X = StandardScaler().fit_transform(X)
-    coefs = LogisticRegression(
-        l1_ratio=1, solver="liblinear", C=0.5, class_weight="balanced", random_state=0
-    ).fit(X, y).coef_[0]
-    idxs = sorted(
-        np.where(coefs != 0)[0], key=lambda i: abs(coefs[i]), reverse=True
-    )[:n_show]
-    return [{"Feature": df.columns[i], "Coefficient": coefs[i]} for i in idxs]
+KP = {
+    "l_shoulder": 5, "r_shoulder": 6,
+    "l_elbow": 7, "r_elbow": 8,
+    "l_wrist": 9, "r_wrist": 10,
+    "l_hip": 11, "r_hip": 12,
+}
+FRAME_FEATURE_NAMES = [
+    "glove_cx", "glove_cy", "glove_w", "glove_h",
+    "l_wrist_glove_dist", "r_wrist_glove_dist",
+    "l_elbow_angle", "r_elbow_angle",
+    "shoulder_width", "hip_width", "torso_height",
+    "r_wrist_x", "r_wrist_y",
+    "l_wrist_x", "l_wrist_y",
+]
+N_FRAME_FEATURES = len(FRAME_FEATURE_NAMES)  # = 15
 
-def decisionTree(df, n_show=5):
-    X = df.drop(columns=["class"])
-    X = X.fillna(X.median())
-    y = df["class"]
-    X = StandardScaler().fit_transform(X)
-    coefs = DecisionTreeClassifier(
-        max_depth=10, class_weight="balanced", random_state=0
-    ).fit(X, y).feature_importances_
-    idxs = np.argsort(coefs)[::-1]
-    idxs = [i for i in idxs if coefs[i] > 0][:n_show]
-    return [{"Feature": df.columns[i], "Importance": coefs[i]} for i in idxs]
+def angleAtJoint(a, b, c):
+    ba = a - b
+    bc = c - b
+    cos_val = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-9)
+    return float(np.degrees(np.arccos(np.clip(cos_val, -1.0, 1.0))))
+
+def extractFrameFeatures(frame):
+    kpts = np.array(frame["keypoints"], dtype=float)
+    box = np.array(frame.get("glove_box", [-1]*4), dtype=float)
+    bx1, by1, bx2, by2 = box
+    b_cx = (bx1 + bx2) / 2
+    b_cy = (by1 + by2) / 2
+    b_w = bx2 - bx1
+    b_h = by2 - by1
+    glove_center = np.array([b_cx, b_cy])
+    l_wrist = kpts[KP["l_wrist"]]
+    r_wrist = kpts[KP["r_wrist"]]
+    l_wrist_dist = float(np.linalg.norm(l_wrist - glove_center))
+    r_wrist_dist = float(np.linalg.norm(r_wrist - glove_center))
+    l_elbow_ang = angleAtJoint(
+        kpts[KP["l_shoulder"]], kpts[KP["l_elbow"]], kpts[KP["l_wrist"]]
+    )
+    r_elbow_ang = angleAtJoint(
+        kpts[KP["r_shoulder"]], kpts[KP["r_elbow"]], kpts[KP["r_wrist"]]
+    )
+    shoulder_w = float(np.linalg.norm(kpts[KP["l_shoulder"]] - kpts[KP["r_shoulder"]]))
+    hip_w = float(np.linalg.norm(kpts[KP["l_hip"]] - kpts[KP["r_hip"]]))
+    torso_h = float(abs(
+        ((kpts[KP["l_shoulder"], 1] + kpts[KP["r_shoulder"], 1]) / 2) -
+        ((kpts[KP["l_hip"], 1] + kpts[KP["r_hip"], 1]) / 2)
+    ))
+    return np.array([
+        b_cx, b_cy, b_w, b_h,
+        l_wrist_dist, r_wrist_dist,
+        l_elbow_ang, r_elbow_ang,
+        shoulder_w, hip_w, torso_h,
+        float(r_wrist[0]), float(r_wrist[1]),
+        float(l_wrist[0]), float(l_wrist[1]),
+    ])
+
+def buildFrameFeatures(sequence_frames):
+    return np.concatenate([extractFrameFeatures(f) for f in sequence_frames])
+
+def makeFrameFeatureNames(n_frames):
+    """Generate names like 'f092_glove_cx' for each flattened position."""
+    width = len(str(n_frames - 1))
+    return [
+        f"f{str(i).zfill(width)}_{feat}"
+        for i in range(n_frames)
+        for feat in FRAME_FEATURE_NAMES
+    ]
+
+def loadFrameDataset(keypoints_root):
+    npy_files = glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
+    npy_files = [f for f in npy_files if "unlabeled" not in os.path.basename(f).lower()]
+    print(keypoints_root)
+    print(len(npy_files))
+    X, y = [], []
+    n_frames = None
+    for path in npy_files:
+        frames = np.load(path, allow_pickle=True).tolist()
+        print(n_frames)
+        print(len(frames))
+        if n_frames is None:
+            n_frames = len(frames)
+        elif len(frames) != n_frames:
+            raise ValueError(
+                f"Frame count mismatch in {os.path.basename(path)}: "
+                f"expected {n_frames}, got {len(frames)}"
+            )
+        X.append(buildFrameFeatures(frames))
+        lower = os.path.basename(path).lower()
+        label = int("fastball" in lower or "cutter" in lower)
+        y.append(label)
+    X = np.array(X)
+    y = np.array(y)
+    feature_names = makeFrameFeatureNames(n_frames)
+    return X, y, n_frames, feature_names
+
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# FEATURE SIGNIFICANCE (TREE-BASED MODELS)
+# ──────────────────────────────────────────────────────────────────────────────────────────────────
+def trainFrameClassifier(X, y, model_type="tree", max_depth=10, n_estimators=100):
+    if model_type == "tree":
+        clf = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
+    else:
+        clf = RandomForestClassifier(n_estimators=n_estimators, random_state=42, n_jobs=-1)
+    return clf.fit(X, y)
+
+def frameClassifierReport(clf, feature_names, X_test, y_test, top_n=10):
+    y_pred = clf.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, target_names=["other", "fastball"])
+    importances = clf.feature_importances_
+    indices = np.argsort(importances)[::-1][:top_n]
+    top_features = [(feature_names[i], importances[i]) for i in indices]
+    return {
+        "accuracy": acc,
+        "classification_report": report,
+        "top_features": top_features,
+    }
 

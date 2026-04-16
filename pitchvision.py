@@ -8,6 +8,9 @@ import processing.tab1_helper as t1
 import processing.tab2_helper as t2
 import processing.tab3_helper as t3
 
+from sklearn.tree import export_text
+from sklearn.model_selection import train_test_split
+
 st.set_page_config(
     page_title="PitchVision | SARG @ JHU",
     page_icon="⚾",
@@ -711,53 +714,79 @@ with tab3:
     st.markdown(
         """
         <div class='info-panel'>
-            Execute <b>Random Forest</b> and <b>L1 Logistic Regression (Lasso)</b> on the local tracking data 
-            (Fastball vs. Offspeed) to identify mechanically divergent tells.
+            <b>Two parallel analyses:</b><br>
+            • <b>Mann‑Whitney U test</b> on 42 aggregate kinematic features (fastball vs. offspeed).<br>
+            • <b>Per‑frame Decision Tree & Random Forest</b> using 15 features per frame (e.g., glove position, wrist distances, elbow angles). 
+            The model sees the entire pitch timeline and pinpoints exactly which frame and feature drives the classification.
         </div>
         """,
         unsafe_allow_html=True
     )
-    if st.button("Run ML Models", use_container_width=True):
-        with st.spinner("Training models and extracting feature importance:"):
-            relabel = dict.fromkeys(
-                ["cutter", "fastball", "four_seam_fastball", "two_seam_fastball"], "fastball"
-            )
-            relabel.update(dict.fromkeys(
-                ["changeup", "curveball", "offspeed", "slider", "splitter"], "offspeed"
-            ))
-            seqs = t3.loadSequences(keypoints_path := os.path.join(base_dir, "Keypoints"))
-            seqs = [(pair[0], relabel[pair[1]]) for pair in seqs if pair[1] != "other"]
-            features = pd.DataFrame([t3.extractFeatures(seq, label) for seq, label in seqs])
-            print(features.shape, features.head())
-            mann_whitney = t3.mannWhitney(features)
-            logistic_regression = t3.logisticRegression(features)
-            decision_tree = t3.decisionTree(features)
-            st.success("Models trained successfully!")
-            colA, colB = st.columns(2)
-            with colA:
-                st.markdown(
-                    "<div class='section-label'>Decision Tree (Top 5)</div>",
-                    unsafe_allow_html=True
+    keypoints_root = os.path.join(base_dir, "Keypoints")
+    if not os.path.exists(keypoints_root):
+        st.markdown(f"<div class='warn-panel'> Keypoints directory not found at `{keypoints_root}`. Run Tab 1 first.</div>", unsafe_allow_html=True)
+    else:
+        with st.spinner("Loading per‑frame sequences (this may take a moment)..."):
+            X_pf, y_pf, n_frames, pf_feature_names = t3.loadFrameDataset(keypoints_root)
+            if len(X_pf) < 3:
+                st.warning(f"Only {len(X_pf)} labeled sequences found. Need at least 3 for meaningful training.")
+            else:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X_pf, y_pf, test_size=0.2, random_state=42, stratify=y_pf
                 )
-                for item in decision_tree:
-                    st.write(f"- `{item["Feature"]}` ({item["Importance"] * 100:.1f}%)")
-            with colB:
-                st.markdown(
-                    "<div class='section-label'> Logistic Regression (Top 5)</div>",
-                    unsafe_allow_html=True
+                n_fastball = int(y_pf.sum())
+                n_other = len(y_pf) - n_fastball
+                st.markdown(f"<div class='success-panel'> Loaded {len(X_pf)} sequences: {n_fastball} fastball/cutter, {n_other} other. Frames per clip: {n_frames}. Features per clip: {X_pf.shape[1]}.</div>", unsafe_allow_html=True)
+                st.markdown("<div class='section-label'> Decision Tree (per‑frame)</div>", unsafe_allow_html=True)
+                dt_clf = t3.trainFrameClassifier(
+                    X_train, y_train, model_type="tree", max_depth=10
                 )
-                for item in logistic_regression:
-                    direction = "HIGHER" if item["Coefficient"] > 0 else "LOWER"
-                    st.write(
-                        f"- `{item["Feature"]}` (abs val = {abs(item["Coefficient"]):.3f}"
-                        f" - **{direction}** on offspeed)"
+                dt_results = t3.frameClassifierReport(
+                    dt_clf, pf_feature_names, X_test, y_test, top_n=15
+                )
+                col_acc, col_rep = st.columns([1, 2])
+                with col_acc:
+                    st.metric("Test Accuracy", f"{dt_results['accuracy']:.3f}")
+                with col_rep:
+                    st.text("Classification Report:\n" + dt_results['classification_report'])
+                st.markdown("**Top 10 most important per‑frame features:**")
+                for feat, imp in dt_results['top_features']:
+                    st.write(f"- `{feat}` ({imp:.4f})")
+                if st.button("📄 Export Decision Tree Rules (tree.txt)"):
+                    tree_text = export_text(
+                        dt_clf, feature_names=pf_feature_names, max_depth=50
                     )
-            st.markdown(
-                "<div class='section-label' style='margin-top:2rem;'>📊 Pairwise Statistical Significance (Fastball vs. Offspeed)</div>",
-                unsafe_allow_html=True
-            )
-            st.dataframe(
-                mann_whitney.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
-                hide_index=True, use_container_width=True, height=400
-            )
+                    st.download_button(
+                        "Download tree.txt", tree_text, file_name="pitch_tree.txt"
+                    )
+                st.markdown("<div class='section-label' style='margin-top:2rem;'> Random Forest (per‑frame)</div>", unsafe_allow_html=True)
+                rf_clf = t3.trainFrameClassifier(
+                    X_train, y_train, model_type="rf", n_estimators=100
+                )
+                rf_results = t3.frameClassifierReport(
+                    rf_clf, pf_feature_names, X_test, y_test, top_n=15
+                )
+                col_acc2, col_rep2 = st.columns([1, 2])
+                with col_acc2:
+                    st.metric("Test Accuracy", f"{rf_results['accuracy']:.3f}")
+                with col_rep2:
+                    st.text("Classification Report:\n" + rf_results['classification_report'])
+                st.markdown("**Top 10 most important per‑frame features:**")
+                for feat, imp in rf_results['top_features']:
+                    st.write(f"- `{feat}` ({imp:.4f})")
+    st.markdown("<div class='section-label' style='margin-top:2rem;'> Pairwise Statistical Significance (Fastball vs. Offspeed) – Aggregate Features</div>", unsafe_allow_html=True)
+    seqs = t3.loadSequences(keypoints_root)
+    relabel = dict.fromkeys(
+        ["cutter", "fastball", "four_seam_fastball", "two_seam_fastball"], "fastball"
+    )
+    relabel.update(dict.fromkeys(
+        ["changeup", "curveball", "offspeed", "slider", "splitter"], "offspeed")
+    )
+    seqs = [(pair[0], relabel[pair[1]]) for pair in seqs if pair[1] in relabel]
+    features_df = pd.DataFrame([t3.extractFeatures(seq, label) for seq, label in seqs])
+    mann_table = t3.mannWhitney(features_df, n_show=15)
+    st.dataframe(
+        mann_table.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
+        hide_index=True, use_container_width=True, height=400
+    )
 
