@@ -95,13 +95,23 @@ def _compute_angles(frame):
     return angles
 
 def extractFeatures(seq, label, fps=60):
-    if len(seq) and isinstance(seq[0], dict):
+    if isinstance(seq, np.ndarray) and seq.dtype == object:
+        seq = seq.tolist()
+        
+    if len(seq) < 2:
+        return {"class": label}
+        
+    if isinstance(seq, list) and isinstance(seq[0], dict):
         glove_seq = np.array(
             [frame.get("glove_box", [-1] * 4) for frame in seq], dtype=np.float32
         )
         seq = np.array([frame["keypoints"] for frame in seq], dtype=np.float32)
     else:
         glove_seq = np.full((len(seq), 4), -1.0, dtype=np.float32)
+    
+    if not isinstance(seq, np.ndarray) or seq.ndim != 3 or seq.shape[1] < 17:
+        return {"class": label}
+        
     T = seq.shape[0]
     dt = 1.0 / fps
     duration = T * dt
@@ -324,10 +334,8 @@ def loadFrameDataset(keypoints_root):
         if n_frames is None:
             n_frames = len(frames)
         elif len(frames) != n_frames:
-            raise ValueError(
-                f"Frame count mismatch in {os.path.basename(path)}: "
-                f"expected {n_frames}, got {len(frames)}"
-            )
+            print(f"Skipped {os.path.basename(path)}: frame count mismatch: expected {n_frames}, got {len(frames)}")
+            continue
         X.append(buildFrameFeatures(frames))
         lower = os.path.basename(path).lower()
         label = int("fastball" in lower or "cutter" in lower)

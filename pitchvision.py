@@ -450,7 +450,7 @@ with tab1:
             os.makedirs(pitch_root, exist_ok=True)
             os.makedirs(keypoint_root, exist_ok=True)
             base_filename = os.path.splitext(uploaded_file.name)[0]
-            save_name = f"{pitcher_name.lower()}_{pitch_type.lower().replace(" ", "_")}"
+            save_name = f"{pitcher_name.lower()}_{pitch_type.lower().replace(' ', '_')}"
             save_name = f"{save_name}_{base_filename}"
             video_target  = os.path.join(pitch_root, f"{save_name}.mov")
             kpt_target = os.path.join(keypoint_root, f"{save_name}.npy")

@@ -115,6 +115,11 @@ def visualizeDifferences(
 ):
     kpts1 = np.load(kpts1_path, allow_pickle=True)
     kpts2 = np.load(kpts2_path, allow_pickle=True)
+    
+    if isinstance(kpts1, np.ndarray) and kpts1.dtype == object:
+        kpts1 = kpts1.tolist()
+    if isinstance(kpts2, np.ndarray) and kpts2.dtype == object:
+        kpts2 = kpts2.tolist()
     if len(kpts1) and isinstance(kpts1[0], dict):
         glove1 = np.array(
             [frame.get("glove_box", [-1] * 4) for frame in kpts1], dtype=np.float32
@@ -129,6 +134,41 @@ def visualizeDifferences(
         kpts2 = np.array([frame["keypoints"] for frame in kpts2], dtype=np.float32)
     else:
         glove2 = np.full((len(kpts2), 4), -1.0, dtype=np.float32)
+
+    # Strip empty padding frames (-1 arrays) so DTW perfectly aligns the actual active sequence
+    valid_idx1 = [i for i, frame in enumerate(kpts1) if np.max(frame) > 0]
+    valid_idx2 = [i for i, frame in enumerate(kpts2) if np.max(frame) > 0]
+    
+    if len(valid_idx1) > 0:
+        kpts1 = np.array(kpts1)[valid_idx1]
+        glove1 = glove1[valid_idx1]
+    if len(valid_idx2) > 0:
+        kpts2 = np.array(kpts2)[valid_idx2]
+        glove2 = glove2[valid_idx2]
+        
+    width, height, fps, frames_bg = 1080, 1920, 30, []
+    is_normalized = False
+    # If the keypoints are mean-normalized, they will be centered around (0,0) and have negative bounds.
+    # OpenCV draws (0,0) at the top-left corner, meaning they render entirely off-screen.
+    # We must globally translate them to the absolute center of the canvas.
+    if len(kpts1) > 0 and np.nanmin(kpts1) < 0:
+        is_normalized = True
+        offset_x = width // 2
+        offset_y = (height // 2) + 200  # Shift slightly lower for aesthetic centering
+        offset = np.array([offset_x, offset_y], dtype=np.float32)
+        
+        # Shift all valid keypoints
+        for i in range(len(kpts1)):
+            kpts1[i] = np.where(kpts1[i] != -1, kpts1[i] + offset, kpts1[i])
+        for i in range(len(kpts2)):
+            kpts2[i] = np.where(kpts2[i] != -1, kpts2[i] + offset, kpts2[i])
+            
+        # Shift glove boxes if valid
+        if glove1[0][0] != -1:
+            glove1 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
+        if glove2[0][0] != -1:
+            glove2 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
+            
     feat1 = extractDTWFeatures(kpts1)
     feat2 = extractDTWFeatures(kpts2)
     is_glove_highlight = "glove" in highlight.lower()
@@ -166,7 +206,8 @@ def visualizeDifferences(
         pts2, valid2 = filterValidPoints(kpts2[j], ALL_KEYPOINTS)
         common_indices = set(valid1).intersection(valid2)
         kpts2_aligned = np.copy(kpts2[j])
-        if len(common_indices) >= 3:
+        T = None
+        if not is_normalized and len(common_indices) >= 3:
             pts1_common = np.array([kpts1[i][k] for k in common_indices], dtype=np.float32)
             pts2_common = np.array([kpts2[j][k] for k in common_indices], dtype=np.float32)
             T, _ = cv2.estimateAffinePartial2D(pts2_common, pts1_common, method=cv2.RANSAC)
@@ -201,6 +242,7 @@ def visualizeDifferences(
             canvas = cv2.addWeighted(canvas, 0.3, np.zeros_like(canvas), 0.7, 0)
         else:
             canvas = np.zeros((height, width, 3), dtype=np.uint8)
+        drawSkeleton(canvas, kpts1[i], (255, 255, 255), thickness=2)
         drawSkeleton(canvas, kpts2_aligned, (255, 100, 50), thickness=2)
         g2 = glove2[j]
         g2_aligned = None
