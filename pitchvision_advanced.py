@@ -417,7 +417,7 @@ with tab1:
         )
         uploaded_file = st.file_uploader(
             f"Upload {pitcher_name} · {pitch_type}",
-            type=["mov", "mp4"],
+            type=["MOV", "mp4"],
             help="Supports .MOV (iPhone/camera) and .mp4 formats."
         )
     with col_right:
@@ -445,13 +445,13 @@ with tab1:
                 "▶  Run Extraction Pipeline", type="primary", use_container_width=True
             )
         if run_pipeline:
-            pitch_root = os.path.join(base_dir, "Pitches")
-            keypoint_root = os.path.join(base_dir, "Keypoints")
+            pitcher_subdir = pitcher_name.lower().replace(' ', '_')
+            pitch_root = os.path.join(base_dir, "Pitches", pitcher_subdir)
+            keypoint_root = os.path.join(base_dir, "Keypoints", pitcher_subdir)
             os.makedirs(pitch_root, exist_ok=True)
             os.makedirs(keypoint_root, exist_ok=True)
             base_filename = os.path.splitext(uploaded_file.name)[0]
-            save_name = f"{pitcher_name.lower()}_{pitch_type.lower().replace(' ', '_')}"
-            save_name = f"{save_name}_{base_filename}"
+            save_name = f"{pitch_type.lower().replace(' ', '_')}_{base_filename}"
             video_target  = os.path.join(pitch_root, f"{save_name}.mov")
             kpt_target = os.path.join(keypoint_root, f"{save_name}.npy")
             with open(video_target, "wb") as f:
