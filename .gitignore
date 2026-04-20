@@ -26,3 +26,7 @@ Visualizations/
 .ipynb_checkpoints/
 .vscode/
 
+# POSE MODELS
+pose_model.pt
+POSE_MODEL.pt
+
