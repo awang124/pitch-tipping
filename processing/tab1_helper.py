@@ -104,7 +104,10 @@ def processVideo(video_path, output_path, pose_model, glove_model, progress, sta
     progress.progress(1.0)
     only_kpts = np.array([f["keypoints"] for f in kpts])
     end = findWindupEnd(only_kpts) + 1
-    kpts = kpts[max(0, end - 180):end]
+    zero_f = {
+        k: (np.zeros_like(v) if isinstance(v, np.ndarray) else 0) for k, v in kpts[0].items()
+    }
+    kpts = ([zero_f] * max(0, 180 - end)) + kpts[max(0, end - 180):end]
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     np.save(output_path, np.array(kpts))
     meta = {

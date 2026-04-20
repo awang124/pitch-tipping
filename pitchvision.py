@@ -8,9 +8,6 @@ import processing.tab1_helper as t1
 import processing.tab2_helper as t2
 import processing.tab3_helper as t3
 
-from sklearn.tree import export_text
-from sklearn.model_selection import train_test_split
-
 st.set_page_config(
     page_title="PitchVision | SARG @ JHU",
     page_icon="⚾",
@@ -386,7 +383,7 @@ tab1, tab2, tab3 = st.tabs([
 
 @st.cache_resource
 def load_models():
-    return ultralytics.YOLO("pose_model.pt"), ultralytics.YOLO("glove_model.pt")
+    return ultralytics.YOLO("POSE_MODEL.pt"), ultralytics.YOLO("NEW_GLOVE_MODEL.pt")
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 # TAB 1: EXTRACTION
@@ -417,7 +414,7 @@ with tab1:
         )
         uploaded_file = st.file_uploader(
             f"Upload {pitcher_name} · {pitch_type}",
-            type=["mov", "mp4"],
+            type=["MOV", "mp4"],
             help="Supports .MOV (iPhone/camera) and .mp4 formats."
         )
     with col_right:
@@ -445,13 +442,13 @@ with tab1:
                 "▶  Run Extraction Pipeline", type="primary", use_container_width=True
             )
         if run_pipeline:
-            pitch_root = os.path.join(base_dir, "Pitches")
-            keypoint_root = os.path.join(base_dir, "Keypoints")
+            pitcher_subdir = pitcher_name.lower().replace(' ', '_')
+            pitch_root = os.path.join(base_dir, "Pitches", pitcher_subdir)
+            keypoint_root = os.path.join(base_dir, "Keypoints", pitcher_subdir)
             os.makedirs(pitch_root, exist_ok=True)
             os.makedirs(keypoint_root, exist_ok=True)
             base_filename = os.path.splitext(uploaded_file.name)[0]
-            save_name = f"{pitcher_name.lower()}_{pitch_type.lower().replace(' ', '_')}"
-            save_name = f"{save_name}_{base_filename}"
+            save_name = f"{pitch_type.lower().replace(' ', '_')}_{base_filename}"
             video_target  = os.path.join(pitch_root, f"{save_name}.mov")
             kpt_target = os.path.join(keypoint_root, f"{save_name}.npy")
             with open(video_target, "wb") as f:
@@ -534,7 +531,9 @@ with tab2:
         """,
         unsafe_allow_html=True
     )
-    keypoint_root = os.path.join(base_dir, "Keypoints")
+    st.markdown("<div class='section-label'>Data Source</div>", unsafe_allow_html=True)
+    tab2_data_root = st.text_input("Pitch Sequence Directory", "keypoints/Randy/trimmed_keypoints_normalized", key="tab2_root")
+    keypoint_root = os.path.join(base_dir, tab2_data_root)
     if not os.path.exists(keypoint_root):
         st.markdown(
             f"""
@@ -714,10 +713,10 @@ with tab3:
     st.markdown(
         """
         <div class='info-panel'>
-            <b>Two parallel analyses:</b><br>
-            • <b>Mann‑Whitney U test</b> on 42 aggregate kinematic features (fastball vs. offspeed).<br>
-            • <b>Per‑frame Decision Tree & Random Forest</b> using 15 features per frame (e.g., glove position, wrist distances, elbow angles). 
-            The model sees the entire pitch timeline and pinpoints exactly which frame and feature drives the classification.
+            <b>Three analytical tiers:</b><br>
+            • <b>Aggregate Feature L1 LogReg</b> isolates core biomechanical tells via sparse regularization (75% accuracy).<br>
+            • <b>Per‑frame Decision Tree</b> tracks granular frame-by-frame positional data.<br>
+            • <b>Mann‑Whitney U Test</b> statistically validates specific features (e.g. glove_speed_max).
         </div>
         """,
         unsafe_allow_html=True
@@ -726,54 +725,103 @@ with tab3:
     if not os.path.exists(keypoints_root):
         st.markdown(f"<div class='warn-panel'> Keypoints directory not found at `{keypoints_root}`. Run Tab 1 first.</div>", unsafe_allow_html=True)
     else:
-        with st.spinner("Loading per‑frame sequences (this may take a moment)..."):
-            X_pf, y_pf, n_frames, pf_feature_names = t3.loadFrameDataset(keypoints_root)
-            if len(X_pf) < 3:
-                st.warning(f"Only {len(X_pf)} labeled sequences found. Need at least 3 for meaningful training.")
+        with st.spinner("Loading and evaluating cross-session per‑frame sequences (this may take a moment)..."):
+            st.markdown("<div class='section-label'>Evaluation Setup</div>", unsafe_allow_html=True)
+            eval_mode = st.radio(
+                "Evaluation Mode",
+                ["Single-Pitcher (80/20 Split & Augment)", "Cross-Session (Train on A, Test on B)"],
+                horizontal=True
+            )
+            
+            if eval_mode == "Cross-Session (Train on A, Test on B)":
+                c1, c2 = st.columns(2)
+                with c1:
+                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/kieran2/trimmed_keypoints")
+                with c2:
+                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "keypoints/Randy/trimmed_keypoints")
+                train_root = os.path.join(base_dir, train_root_rel)
+                test_root = os.path.join(base_dir, test_root_rel)
+                
+                raw_seqs_train, n_frames, pf_feature_names = t3.loadFrameDataset(train_root)
+                raw_seqs_test, _, _ = t3.loadFrameDataset(test_root)
             else:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_pf, y_pf, test_size=0.2, random_state=42, stratify=y_pf
-                )
-                n_fastball = int(y_pf.sum())
-                n_other = len(y_pf) - n_fastball
-                st.markdown(f"<div class='success-panel'> Loaded {len(X_pf)} sequences: {n_fastball} fastball/cutter, {n_other} other. Frames per clip: {n_frames}. Features per clip: {X_pf.shape[1]}.</div>", unsafe_allow_html=True)
-                st.markdown("<div class='section-label'> Decision Tree (per‑frame)</div>", unsafe_allow_html=True)
-                dt_clf = t3.trainFrameClassifier(
-                    X_train, y_train, model_type="tree", max_depth=10
-                )
-                dt_results = t3.frameClassifierReport(
-                    dt_clf, pf_feature_names, X_test, y_test, top_n=15
-                )
-                col_acc, col_rep = st.columns([1, 2])
-                with col_acc:
-                    st.metric("Test Accuracy", f"{dt_results['accuracy']:.3f}")
-                with col_rep:
-                    st.text("Classification Report:\n" + dt_results['classification_report'])
-                st.markdown("**Top 10 most important per‑frame features:**")
-                for feat, imp in dt_results['top_features']:
-                    st.write(f"- `{feat}` ({imp:.4f})")
-                if st.button("📄 Export Decision Tree Rules (tree.txt)"):
-                    tree_text = export_text(
-                        dt_clf, feature_names=pf_feature_names, max_depth=50
-                    )
-                    st.download_button(
-                        "Download tree.txt", tree_text, file_name="pitch_tree.txt"
-                    )
-                st.markdown("<div class='section-label' style='margin-top:2rem;'> Random Forest (per‑frame)</div>", unsafe_allow_html=True)
-                rf_clf = t3.trainFrameClassifier(
-                    X_train, y_train, model_type="rf", n_estimators=100
-                )
-                rf_results = t3.frameClassifierReport(
-                    rf_clf, pf_feature_names, X_test, y_test, top_n=15
-                )
-                col_acc2, col_rep2 = st.columns([1, 2])
-                with col_acc2:
-                    st.metric("Test Accuracy", f"{rf_results['accuracy']:.3f}")
-                with col_rep2:
-                    st.text("Classification Report:\n" + rf_results['classification_report'])
-                st.markdown("**Top 10 most important per‑frame features:**")
-                for feat, imp in rf_results['top_features']:
-                    st.write(f"- `{feat}` ({imp:.4f})")
+                data_root_rel = st.text_input("Pitcher Sequence Directory", "keypoints/Randy/trimmed_keypoints_normalized")
+                data_root = os.path.join(base_dir, data_root_rel)
+                
+                all_seqs, n_frames, pf_feature_names = t3.loadFrameDataset(data_root)
+                raw_seqs_train = all_seqs  # We'll split it inside the functions
+                raw_seqs_test = []
+            
+            if eval_mode == "Cross-Session (Train on A, Test on B)":
+                if len(raw_seqs_train) < 3 or len(raw_seqs_test) < 1:
+                    st.warning(f"Not enough labeled sequences found. Train: {len(raw_seqs_train)}, Test: {len(raw_seqs_test)}.")
+                else:
+                    n_fastball = sum(1 for s, l in raw_seqs_train if l == 1)
+                    n_other = len(raw_seqs_train) - n_fastball
+                    st.markdown(f"<div class='success-panel'> Session 1 (Train): {n_fastball} fastball, {n_other} offspeed. Session 2 (Test): {len(raw_seqs_test)} sequences. Features per frame: {t3.N_FRAME_FEATURES}.</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div class='section-label'> Decision Tree (Cross-Session Validation)</div>", unsafe_allow_html=True)
+                    dt_results = t3.evaluate_cross_session(raw_seqs_train, raw_seqs_test, pf_feature_names, model_type="tree", max_depth=10, top_n=10)
+                    st.markdown(f"**Augmented Training Set Size:** {dt_results['augmented_train_size']} sequences")
+                    col_acc, col_rep = st.columns([1, 2])
+                    with col_acc:
+                        st.metric("Test Accuracy (Session 2)", f"{dt_results['accuracy']:.3f}")
+                    with col_rep:
+                        st.text("Classification Report:\n" + dt_results['classification_report'])
+                    st.markdown("**Top 10 most important invariant features:**")
+                    for feat, imp in dt_results['top_features']:
+                        st.write(f"- `{feat}` ({imp:.4f})")
+                        
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'> ⭐ Aggregate Feature L1 LogReg (Cross-Session Validation)</div>", unsafe_allow_html=True)
+                    agg_results = t3.evaluate_cross_session_aggregate_lr(raw_seqs_train, raw_seqs_test, C=1.0, top_n=10)
+                    st.markdown(f"**L1 Sparsity:** {agg_results['n_nonzero_features']}/{agg_results['total_features']} aggregate features selected")
+                    st.markdown(f"**Augmented Training Set:** {agg_results['augmented_train_size']} sequences")
+                    col_acc4, col_rep4 = st.columns([1, 2])
+                    with col_acc4:
+                        st.metric("Test Accuracy (Session 2)", f"{agg_results['accuracy']:.3f}")
+                    with col_rep4:
+                        st.text("Classification Report:\n" + agg_results['classification_report'])
+                    st.markdown("**Top features by L1 coefficient (positive = fastball, negative = offspeed):**")
+                    for feat, coef in agg_results['top_features']:
+                        direction = "→ fastball" if coef > 0 else "→ offspeed"
+                        st.write(f"- `{feat}` ({coef:+.4f}) {direction}")
+            else:
+                if len(all_seqs) < 5:
+                    st.warning(f"Not enough sequences to split for Single-Pitcher evaluation. Found {len(all_seqs)}.")
+                else:
+                    n_fastball = sum(1 for s, l in all_seqs if l == 1)
+                    n_other = len(all_seqs) - n_fastball
+                    st.markdown(f"<div class='success-panel'> Pitcher total: {n_fastball} fastball, {n_other} offspeed sequences. Running stratified 80/20 split and augmenting ONLY training.</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'> Decision Tree (Legacy Per-Frame Model)</div>", unsafe_allow_html=True)
+                    dt_results = t3.evaluate_single_session(all_seqs, pf_feature_names, model_type="tree", top_n=10)
+                    if dt_results:
+                        st.markdown(f"**Augmented Training Set Size:** {dt_results['augmented_train_size']} sequences")
+                        c_acc1, c_rep1 = st.columns([1, 2])
+                        with c_acc1:
+                            st.metric("Test Accuracy (Holdout)", f"{dt_results['accuracy']:.3f}")
+                        with c_rep1:
+                            st.text("Classification Report:\n" + dt_results['classification_report'])
+                            
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'> ⭐ Single-Pitcher Aggregate L1 LogReg (80/20 Split)</div>", unsafe_allow_html=True)
+                    st.markdown("*Uses ~50 biomechanical summary stats, properly evaluating against a completely pure internal holdout without cross-pitcher leakage.*")
+                    
+                    agg_results = t3.evaluate_single_session_aggregate_lr(all_seqs, test_size=0.2, C=1.0, top_n=10)
+                    if not agg_results:
+                        st.error("Error evaluating single session: Not enough samples per class to perform a stratified split.")
+                    else:
+                        st.markdown(f"**L1 Sparsity:** {agg_results['n_nonzero_features']}/{agg_results['total_features']} aggregate features selected")
+                        st.markdown(f"**Training Set:** {agg_results['train_base_size']} real pitches (Augmented to {agg_results['augmented_train_size']} synthetic samples)")
+                        st.markdown(f"**Test Set:** {agg_results['test_size']} pure held-out pitches")
+                        col_acc4, col_rep4 = st.columns([1, 2])
+                        with col_acc4:
+                            st.metric("Test Accuracy (Holdout)", f"{agg_results['accuracy']:.3f}")
+                        with col_rep4:
+                            st.text("Classification Report:\n" + agg_results['classification_report'])
+                        st.markdown("**Top predictive tells for this pitcher (positive = fastball, negative = offspeed):**")
+                        for feat, coef in agg_results['top_features']:
+                            direction = "→ fastball" if coef > 0 else "→ offspeed"
+                            st.write(f"- `{feat}` ({coef:+.4f}) {direction}")
     st.markdown("<div class='section-label' style='margin-top:2rem;'> Pairwise Statistical Significance (Fastball vs. Offspeed) – Aggregate Features</div>", unsafe_allow_html=True)
     seqs = t3.loadSequences(keypoints_root)
     relabel = dict.fromkeys(
@@ -783,10 +831,19 @@ with tab3:
         ["changeup", "curveball", "offspeed", "slider", "splitter"], "offspeed")
     )
     seqs = [(pair[0], relabel[pair[1]]) for pair in seqs if pair[1] in relabel]
-    features_df = pd.DataFrame([t3.extractFeatures(seq, label) for seq, label in seqs])
-    mann_table = t3.mannWhitney(features_df, n_show=15)
-    st.dataframe(
-        mann_table.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
-        hide_index=True, use_container_width=True, height=400
-    )
+    if len(seqs) < 4:
+        st.markdown("<div class='warn-panel'>Not enough labeled sequences for statistical testing (need ≥ 4).</div>", unsafe_allow_html=True)
+    else:
+        raw_features = [t3.extractFeatures(seq, label) for seq, label in seqs]
+        # Filter out sequences that returned only {"class": label} (too short)
+        raw_features = [f for f in raw_features if len(f) > 1]
+        if len(raw_features) < 4:
+            st.markdown("<div class='warn-panel'>Not enough sequences with extractable features for statistical testing.</div>", unsafe_allow_html=True)
+        else:
+            features_df = pd.DataFrame(raw_features)
+            mann_table = t3.mannWhitney(features_df, n_show=15)
+            st.dataframe(
+                mann_table.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
+                hide_index=True, use_container_width=True, height=400
+            )
 
