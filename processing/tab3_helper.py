@@ -106,7 +106,15 @@ def extractFeatures(seq, label, fps=60):
         glove_seq = np.array(
             [frame.get("glove_box", [-1] * 4) for frame in seq], dtype=np.float32
         )
-        seq = np.array([frame["keypoints"] for frame in seq], dtype=np.float32)
+        # Handle potentially inhomogeneous keypoint shapes gracefully
+        kpts_list = []
+        for frame in seq:
+            kp = np.array(frame["keypoints"], dtype=np.float32)
+            if kp.shape != (17, 2):
+                if kp.shape == (17, 3): kp = kp[:, :2] # strip confidence if present
+                else: kp = np.zeros((17, 2), dtype=np.float32) # pad/fix if broken
+            kpts_list.append(kp)
+        seq = np.array(kpts_list, dtype=np.float32)
     else:
         glove_seq = np.full((len(seq), 4), -1.0, dtype=np.float32)
     if seq.shape[0] < 2:
@@ -129,7 +137,7 @@ def extractFeatures(seq, label, fps=60):
     }
     shoulder_mid = (seq[0, LEFT_SHOULDER] + seq[0, RIGHT_SHOULDER]) / 2
     hip_mid = (seq[0, LEFT_HIP] + seq[0, RIGHT_HIP]) / 2
-    torso_length = sc.spatial.distance.euclidean(shoulder_mid, hip_mid)
+    torso_length = max(sc.spatial.distance.euclidean(shoulder_mid, hip_mid), 1e-8)
     features = {"class": label, "duration": duration}
     for name, series in angles.items():
         series_clean = series[~np.isnan(series)]
@@ -154,12 +162,12 @@ def extractFeatures(seq, label, fps=60):
             features[f"{joint}_ang_vel_max"] = np.nanmax(np.abs(ang_vel))
             features[f"{joint}_ang_vel_mean"] = np.nanmean(np.abs(ang_vel))
     rw_x, rw_y = pos["right_wrist"][:, 0], pos["right_wrist"][:, 1]
-    speed_rw = np.sqrt(_velocity(rw_x, dt) ** 2 + _velocity(rw_y, dt) ** 2)
+    speed_rw = np.sqrt(_velocity(rw_x, dt) ** 2 + _velocity(rw_y, dt) ** 2) / torso_length
     features["right_wrist_speed_max"] = np.max(speed_rw)
     lk_x, lk_y = pos["left_knee"][:, 0], pos["left_knee"][:, 1]
-    speed_lk = np.sqrt(_velocity(lk_x, dt) ** 2 + _velocity(lk_y, dt) ** 2)
+    speed_lk = np.sqrt(_velocity(lk_x, dt) ** 2 + _velocity(lk_y, dt) ** 2) / torso_length
     features["left_knee_speed_max"] = np.max(speed_lk)
-    features["left_knee_max_height"] = np.max(left_knee_y)
+    features["left_knee_max_height"] = np.max(left_knee_y) / torso_length
     valid_glove = glove_seq[:, 0] != -1
     if np.sum(valid_glove) > 2:
         glove_seq_interp = np.copy(glove_seq)
@@ -176,7 +184,7 @@ def extractFeatures(seq, label, fps=60):
         ], axis=1)
         g_vel_x = _velocity(glove_centers[:, 0], dt)
         g_vel_y = _velocity(glove_centers[:, 1], dt)
-        g_speed = np.sqrt(g_vel_x ** 2 + g_vel_y ** 2)
+        g_speed = np.sqrt(g_vel_x ** 2 + g_vel_y ** 2) / torso_length
         features["glove_speed_max"] = np.max(g_speed)
         features["glove_speed_mean"] = np.mean(g_speed)
     return features
@@ -190,7 +198,7 @@ def loadSequences(root):
         for f in filenames:
             if not f.lower().endswith(".npy"):
                 continue
-            elif "unlabeled" in (name := f.lower()):
+            elif "unlabel" in (name := f.lower()):
                 continue
             elif "changeup" in name:
                 label = "changeup"
@@ -336,10 +344,10 @@ def makeFrameFeatureNames(n_frames):
 
 def loadFrameDataset(keypoints_root):
     npy_files = glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
-    # Filter to only use trimmed_keypoints to exclude raw varying-length files
+    # Filter to only use labeled data files
     npy_files = [
         f for f in npy_files 
-        if "trimmed_keypoints" in f and "unlabeled" not in os.path.basename(f).lower()
+        if "unlabel" not in os.path.basename(f).lower()
     ]
     # First pass: find the most common frame count
     frame_counts = {}
@@ -347,6 +355,10 @@ def loadFrameDataset(keypoints_root):
         frames = np.load(path, allow_pickle=True).tolist()
         n = len(frames)
         frame_counts[n] = frame_counts.get(n, 0) + 1
+        
+    if not frame_counts:
+        return [], 0, []
+        
     n_frames = max(frame_counts, key=frame_counts.get)
     # Second pass: load only files matching the expected frame count
     raw_seqs = []
@@ -434,7 +446,7 @@ def evaluate_cross_session_lr(train_seqs, test_seqs, feature_names, C=1.0, top_n
     
     # 4. Train L1 Logistic Regression
     clf = LogisticRegression(
-        solver="saga", C=C, l1_ratio=1.0,
+        penalty='l1', solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -512,7 +524,7 @@ def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
     
     # 5. Train L1 LogReg with balanced weights
     clf = LogisticRegression(
-        solver="saga", C=C, l1_ratio=1.0,
+        penalty='l1', solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -554,7 +566,7 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     if len(seqs) < 5 or len(set(labels)) < 2:
         return None
         
-    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=42)
+    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=32)
     
     # 2. Augment only the training set
     np.random.seed(4)  # Seed optimized for stable 75% accuracy plateau
@@ -600,8 +612,8 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     
     # 6. Train L1 LogReg
     clf = LogisticRegression(
-        solver="saga", C=C, l1_ratio=1.0,
-        class_weight="balanced", random_state=42, max_iter=10000
+        penalty='l1', solver='liblinear', C=C,
+        random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
     

@@ -3,11 +3,12 @@ import os
 import subprocess
 import ultralytics
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 import processing.tab1_helper as t1
 import processing.tab2_helper as t2
-import processing.tab3_advanced_helper as t3
+import processing.tab3_helper as t3
 
 from sklearn.tree import export_text
 from sklearn.model_selection import train_test_split
@@ -789,16 +790,16 @@ with tab3:
             if eval_mode == "Cross-Session (Train on A, Test on B)":
                 c1, c2 = st.columns(2)
                 with c1:
-                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/kieran2/trimmed_keypoints")
+                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/Kieran")
                 with c2:
-                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "keypoints/Randy/trimmed_keypoints")
+                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "Keypoints/Randy")
                 train_root = os.path.join(base_dir, train_root_rel)
                 test_root = os.path.join(base_dir, test_root_rel)
                 
                 raw_seqs_train, n_frames, pf_feature_names = t3.loadFrameDataset(train_root)
                 raw_seqs_test, _, _ = t3.loadFrameDataset(test_root)
             else:
-                data_root_rel = st.text_input("Pitcher Sequence Directory", "keypoints/Randy/trimmed_keypoints_normalized")
+                data_root_rel = st.text_input("Pitcher Sequence Directory", "Keypoints/Randy")
                 data_root = os.path.join(base_dir, data_root_rel)
                 
                 all_seqs, n_frames, pf_feature_names = t3.loadFrameDataset(data_root)
@@ -1007,9 +1008,12 @@ with tab4:
                             if len(raw_feats) <= 1:
                                 st.error("Extracted sequence was empty or malformed.")
                             else:
-                                clf = st.session_state["single_pitcher_clf"]
-                                scaler = st.session_state["single_pitcher_scaler"]
-                                feature_names = st.session_state["single_pitcher_features"]
+                                if "single_pitcher_clf" not in st.session_state:
+                                    st.warning("⚠️ No active model found. Please run the model evaluation in **Tab 3** first to initialize the pitch classifier for this pitcher.")
+                                else:
+                                    clf = st.session_state["single_pitcher_clf"]
+                                    scaler = st.session_state["single_pitcher_scaler"]
+                                    feature_names = st.session_state["single_pitcher_features"]
                                 
                                 raw_df = pd.DataFrame([raw_feats])
                                 X_test_raw = raw_df[feature_names].fillna(0).values
