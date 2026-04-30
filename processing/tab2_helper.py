@@ -98,16 +98,21 @@ def drawSkeleton(frame, kpts, color, thickness=2, valid_only=False):
 
 def extractDTWFeatures(kpts_sequence):
     features = []
+    prev_frame = None
     for frame in kpts_sequence:
-        if isValidKpt(frame[13]) and isValidKpt(frame[14]):
-            val = (frame[13, 1] + frame[14, 1]) / 2
-        elif isValidKpt(frame[13]):
-            val = frame[13, 1]
-        elif isValidKpt(frame[14]):
-            val = frame[14, 1]
+        # Create a multi-feature vector for high-fidelity matching
+        # 1. Torso/Knee heights (Y-signals)
+        knee = (frame[13, 1] + frame[14, 1]) / 2 if isValidKpt(frame[13]) and isValidKpt(frame[14]) else 0
+        hip = (frame[11, 1] + frame[12, 1]) / 2 if isValidKpt(frame[11]) and isValidKpt(frame[12]) else 0
+        
+        # 2. Kinetic Energy (Velocity signal) - Great for finding the start of motion
+        if prev_frame is not None:
+            vel = np.mean(np.linalg.norm(frame - prev_frame, axis=1))
         else:
-            val = 0
-        features.append([val])
+            vel = 0
+        prev_frame = frame
+        
+        features.append([knee, hip, vel])
     return np.array(features)
 
 def visualizeDifferences(
@@ -148,26 +153,29 @@ def visualizeDifferences(
         
     width, height, fps, frames_bg = 1080, 1920, 30, []
     is_normalized = False
-    # If the keypoints are mean-normalized, they will be centered around (0,0) and have negative bounds.
-    # OpenCV draws (0,0) at the top-left corner, meaning they render entirely off-screen.
-    # We must globally translate them to the absolute center of the canvas.
-    if len(kpts1) > 0 and np.nanmin(kpts1) < 0:
-        is_normalized = True
-        offset_x = width // 2
-        offset_y = (height // 2) + 200  # Shift slightly lower for aesthetic centering
-        offset = np.array([offset_x, offset_y], dtype=np.float32)
-        
-        # Shift all valid keypoints
-        for i in range(len(kpts1)):
-            kpts1[i] = np.where(kpts1[i] != -1, kpts1[i] + offset, kpts1[i])
-        for i in range(len(kpts2)):
-            kpts2[i] = np.where(kpts2[i] != -1, kpts2[i] + offset, kpts2[i])
+    # Check if the data is mean-centered/normalized (values near zero)
+    # Raw pixel data typically has values in the hundreds/thousands
+    if len(kpts1) > 0:
+        valid_pts = kpts1[kpts1 != 0] # exclude padding
+        if len(valid_pts) > 0 and np.mean(np.abs(valid_pts)) < 50:
+            is_normalized = True
             
-        # Shift glove boxes if valid
-        if glove1[0][0] != -1:
-            glove1 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
-        if glove2[0][0] != -1:
-            glove2 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
+        if is_normalized:
+            offset_x = width // 2
+            offset_y = (height // 2) + 200  # Shift slightly lower for aesthetic centering
+            offset = np.array([offset_x, offset_y], dtype=np.float32)
+            
+            # Shift all valid keypoints
+            for i in range(len(kpts1)):
+                kpts1[i] = np.where(kpts1[i] != -1, kpts1[i] + offset, kpts1[i])
+            for i in range(len(kpts2)):
+                kpts2[i] = np.where(kpts2[i] != -1, kpts2[i] + offset, kpts2[i])
+                
+            # Shift glove boxes if valid
+            if glove1[0][0] != -1:
+                glove1 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
+            if glove2[0][0] != -1:
+                glove2 += np.array([offset_x, offset_y, offset_x, offset_y], dtype=np.float32)
             
     feat1 = extractDTWFeatures(kpts1)
     feat2 = extractDTWFeatures(kpts2)
@@ -195,32 +203,72 @@ def visualizeDifferences(
     out = cv2.VideoWriter(
         output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
     )
-    ALL_KEYPOINTS = list(range(17))
+    # 1. Pre-calculate and Interpolate Anchors for the whole sequence
+    def get_interpolated_anchors(seq):
+        anchors = []
+        for frame in seq:
+            # Prefer Hips -> Shoulders -> Nose
+            if isValidKpt(frame[11]) and isValidKpt(frame[12]):
+                anchors.append((frame[11] + frame[12]) / 2)
+            elif isValidKpt(frame[5]) and isValidKpt(frame[6]):
+                anchors.append((frame[5] + frame[6]) / 2)
+            elif isValidKpt(frame[0]):
+                anchors.append(frame[0])
+            else:
+                anchors.append(None)
+        
+        # Linear Interpolation for missing anchors
+        anchors = np.array(anchors)
+        valid_indices = np.where([a is not None for a in anchors])[0]
+        if len(valid_indices) == 0:
+            return np.zeros((len(seq), 2))
+        
+        all_indices = np.arange(len(seq))
+        valid_anchors = np.stack(anchors[valid_indices])
+        
+        interp_x = np.interp(all_indices, valid_indices, valid_anchors[:, 0])
+        interp_y = np.interp(all_indices, valid_indices, valid_anchors[:, 1])
+        return np.stack([interp_x, interp_y], axis=1)
+
+    anchors1 = get_interpolated_anchors(kpts1)
+    anchors2 = get_interpolated_anchors(kpts2)
+
+    # 2. Calculate a GLOBAL scale factor
+    def get_torso_length(kpts):
+        lengths = []
+        for frame in kpts:
+            if isValidKpt(frame[5]) and isValidKpt(frame[6]) and isValidKpt(frame[11]) and isValidKpt(frame[12]):
+                s_mid = (frame[5] + frame[6]) / 2
+                h_mid = (frame[11] + frame[12]) / 2
+                lengths.append(np.linalg.norm(s_mid - h_mid))
+        return np.median(lengths) if lengths else 1.0
+
+    len1 = get_torso_length(kpts1)
+    len2 = get_torso_length(kpts2)
+    global_scale = len1 / len2 if len2 > 0 else 1.0
+    
     max_overall_dist = 0
     max_overall_joint = ""
     max_overall_frame = 0
+    
     for idx, (i, j) in enumerate(path):
         if video_bg and i >= len(frames_bg):
             break
-        pts1, valid1 = filterValidPoints(kpts1[i], ALL_KEYPOINTS)
-        pts2, valid2 = filterValidPoints(kpts2[j], ALL_KEYPOINTS)
-        common_indices = set(valid1).intersection(valid2)
+        
+        anchor1 = anchors1[i]
+        anchor2 = anchors2[j]
+        
         kpts2_aligned = np.copy(kpts2[j])
-        T = None
-        if not is_normalized and len(common_indices) >= 3:
-            pts1_common = np.array([kpts1[i][k] for k in common_indices], dtype=np.float32)
-            pts2_common = np.array([kpts2[j][k] for k in common_indices], dtype=np.float32)
-            T, _ = cv2.estimateAffinePartial2D(pts2_common, pts1_common, method=cv2.RANSAC)
-            if T is not None:
-                kpts2_aligned = cv2.transform(kpts2[j].reshape(-1, 1, 2), T).reshape(-1, 2)
-            else:
-                center1 = (kpts1[i][11] + kpts1[i][12]) / 2\
-                    if isValidKpt(kpts1[i][11]) and isValidKpt(kpts1[i][12]) else None
-                center2 = (kpts2[j][11] + kpts2[j][12]) / 2\
-                    if isValidKpt(kpts2[j][11]) and isValidKpt(kpts2[j][12]) else None
-                if center1 is not None and center2 is not None:
-                    shift = center1 - center2
-                    kpts2_aligned = kpts2[j] + shift
+        shift_vec = None
+        
+        if not is_normalized:
+            # Formula: p_aligned = (p_raw - anchor2) * global_scale + anchor1
+            for k in range(len(kpts2_aligned)):
+                if isValidKpt(kpts2_aligned[k]):
+                    kpts2_aligned[k] = (kpts2_aligned[k] - anchor2) * global_scale + anchor1
+            
+            # For the glove box transformation later
+            shift_vec = anchor1 - anchor2 * global_scale
         max_dist_in_frame = 0
         max_joint_in_frame = ""
         differences = []
@@ -246,18 +294,12 @@ def visualizeDifferences(
         drawSkeleton(canvas, kpts2_aligned, (255, 100, 50), thickness=2)
         g2 = glove2[j]
         g2_aligned = None
-        if T is not None and g2[0] != -1:
+        if shift_vec is not None and g2[0] != -1:
             x1, y1, x2, y2 = g2
-            corners = np.array(
-                [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32
-            ).reshape(-1, 1, 2)
-            corners_aligned = cv2.transform(corners, T).reshape(-1, 2)
-            nx1, ny1 = np.min(corners_aligned, axis=0)
-            nx2, ny2 = np.max(corners_aligned, axis=0)
+            # Apply same scale and shift to the box corners
+            nx1, ny1 = np.array([x1, y1]) * global_scale + shift_vec
+            nx2, ny2 = np.array([x2, y2]) * global_scale + shift_vec
             g2_aligned = [nx1, ny1, nx2, ny2]
-        elif T is None and g2[0] != -1 and "shift" in locals():
-            x1, y1, x2, y2 = g2
-            g2_aligned = [x1 + shift[0], y1 + shift[1], x2 + shift[0], y2 + shift[1]]
         g1 = glove1[i]
         if g1[0] != -1:
             cv2.rectangle(
