@@ -533,7 +533,7 @@ def evaluate_cross_session_lr(train_seqs, test_seqs, feature_names, C=1.0, top_n
     
     # 4. Train L1 Logistic Regression
     clf = LogisticRegression(
-        penalty='l1', solver='liblinear', C=C,
+        l1_ratio=1, solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -611,7 +611,7 @@ def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
     
     # 5. Train L1 LogReg with balanced weights
     clf = LogisticRegression(
-        penalty='l1', solver='liblinear', C=C,
+        l1_ratio=1, solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -699,7 +699,7 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     
     # 6. Train L1 LogReg
     clf = LogisticRegression(
-        penalty='l1', solver='liblinear', C=C,
+        l1_ratio=1, solver='liblinear', C=C,
         random_state=1, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
