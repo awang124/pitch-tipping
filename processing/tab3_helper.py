@@ -298,7 +298,6 @@ def extractFrameFeatures(frame):
     l_wrist = kpts[KP["l_wrist"]]
     r_wrist = kpts[KP["r_wrist"]]
     
-    # Calculate torso_h for normalization (avoid zero division)
     torso_h = float(abs(
         ((kpts[KP["l_shoulder"], 1] + kpts[KP["r_shoulder"], 1]) / 2) -
         ((kpts[KP["l_hip"], 1] + kpts[KP["r_hip"], 1]) / 2)
@@ -315,7 +314,6 @@ def extractFrameFeatures(frame):
     shoulder_w = float(np.linalg.norm(kpts[KP["l_shoulder"]] - kpts[KP["r_shoulder"]])) / torso_h
     hip_w = float(np.linalg.norm(kpts[KP["l_hip"]] - kpts[KP["r_hip"]])) / torso_h
 
-    # Offsets relative to shoulder midline
     glove_cx_offset_norm = (b_cx - shoulder_mid[0]) / torso_h if b_cx >= 0 else 0
     glove_cy_offset_norm = (b_cy - shoulder_mid[1]) / torso_h if b_cy >= 0 else 0
     r_wrist_x_offset_norm = (r_wrist[0] - shoulder_mid[0]) / torso_h
@@ -338,7 +336,6 @@ def buildFrameFeatures(sequence_frames):
     return np.concatenate([extractFrameFeatures(f) for f in sequence_frames])
 
 def makeFrameFeatureNames(n_frames):
-    """Generate names like 'f092_glove_cx' for each flattened position."""
     width = len(str(n_frames - 1))
     return [
         f"f{str(i).zfill(width)}_{feat}"
@@ -348,8 +345,7 @@ def makeFrameFeatureNames(n_frames):
 
 def loadFrameDataset(keypoints_root):
     npy_files = glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
-    npy_files.sort() # Guarantee deterministic order
-    # Filter to only use labeled data files
+    npy_files.sort()
     npy_files = [
         f for f in npy_files 
         if "unlabel" not in os.path.basename(f).lower()
@@ -365,7 +361,6 @@ def loadFrameDataset(keypoints_root):
         return [], 0, []
         
     n_frames = max(frame_counts, key=frame_counts.get)
-    # Second pass: load only files matching the expected frame count
     raw_seqs = []
     skipped = []
     for path in npy_files:
@@ -383,7 +378,6 @@ def loadFrameDataset(keypoints_root):
 # TRAINING SET AUGMENTATION
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 def addNoise(frames, sigma=0.005):
-    """Adds zero-mean Gaussian noise to keypoints."""
     aug_frames = []
     for frame in frames:
         new_frame = copy.deepcopy(frame)
@@ -393,34 +387,22 @@ def addNoise(frames, sigma=0.005):
     return aug_frames
 
 def timeWarp(frames, factor):
-    """
-    Resamples the frame sequence by `factor`.
-    If factor < 1, the pitch is faster (compressed). We pad it to maintain length.
-    If factor > 1, the pitch is slower (stretched). We crop it to maintain length.
-    """
     orig_len = len(frames)
     new_len = int(orig_len * factor)
-    
-    # We will interpolate each keypoint and glove_box coordinate
-    # The original time axis is 0 to orig_len-1
     orig_t = np.linspace(0, 1, orig_len)
     new_t = np.linspace(0, 1, new_len)
     
-    # We need to collect all scalar sequences
     seq_kpt = np.array([f["keypoints"] for f in frames]) # (T, 17, 2)
     has_glove = "glove_box" in frames[0]
     if has_glove:
         seq_glove = np.array([f["glove_box"] for f in frames]) # (T, 4)
         
-    # Interpolate keypoints
     f_kpt = sc.interpolate.interp1d(orig_t, seq_kpt, axis=0, kind='linear')
     resampled_kpt = f_kpt(new_t)
-    
     if has_glove:
         f_glove = sc.interpolate.interp1d(orig_t, seq_glove, axis=0, kind='linear')
         resampled_glove = f_glove(new_t)
         
-    # Reconstruct frames
     resampled_frames = []
     for i in range(new_len):
         frame = {"keypoints": resampled_kpt[i].astype(np.float32)}
@@ -428,14 +410,11 @@ def timeWarp(frames, factor):
             frame["glove_box"] = resampled_glove[i].tolist()
         resampled_frames.append(frame)
         
-    # Maintain length (anchor at the end since windup truncation stops at release point)
     if new_len < orig_len:
-        # Pad at the beginning with the first frame
         pad_len = orig_len - new_len
         pad_frames = [copy.deepcopy(resampled_frames[0]) for _ in range(pad_len)]
         final_frames = pad_frames + resampled_frames
     elif new_len > orig_len:
-        # Crop from the beginning
         crop_len = new_len - orig_len
         final_frames = resampled_frames[crop_len:]
     else:
@@ -444,23 +423,18 @@ def timeWarp(frames, factor):
     return final_frames
 
 def augmentSequence(frames, label):
-    """Generates synthetic variants of a single sequence."""
     variants = []
     
-    # 1. Add noise
     variants.append((addNoise(frames, sigma=0.005), label))
     variants.append((addNoise(frames, sigma=0.01), label))
     
-    # 2. Time warping
     variants.append((timeWarp(frames, factor=0.9), label))
     variants.append((timeWarp(frames, factor=0.95), label))
     variants.append((timeWarp(frames, factor=1.05), label))
     variants.append((timeWarp(frames, factor=1.1), label))
     
-    # 3. Combinations
     variants.append((addNoise(timeWarp(frames, factor=0.95), sigma=0.005), label))
     variants.append((addNoise(timeWarp(frames, factor=1.05), sigma=0.005), label))
-    
     return variants
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -510,43 +484,34 @@ def evaluate_cross_session(train_seqs, test_seqs, feature_names, model_type="tre
 
 
 def evaluate_cross_session_lr(train_seqs, test_seqs, feature_names, C=1.0, top_n=10):
-    """L1-regularized Logistic Regression with augmentation, scaling, and balanced weights."""
-    # 1. Augment only the training set
     augmented_train = []
     for seq, label in train_seqs:
         augmented_train.append((seq, label))
         augmented_train.extend(augmentSequence(seq, label))
         
-    # 2. Build feature matrices
     X_train = np.array([buildFrameFeatures(s) for s, l in augmented_train])
-    y_train = np.array([l for s, l in augmented_train])
-    
     X_test = np.array([buildFrameFeatures(s) for s, l in test_seqs])
+    y_train = np.array([l for s, l in augmented_train])
     y_test = np.array([l for s, l in test_seqs])
     
-    # 3. Scale features (critical for LR)
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # 4. Train L1 Logistic Regression
     clf = LogisticRegression(
         l1_ratio=1, solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
     
-    # 5. Predict
     y_pred = clf.predict(X_test_scaled)
     acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=["other", "fastball"], zero_division=0)
-    
-    # 6. Extract top features by absolute coefficient magnitude
+    report = classification_report(
+        y_test, y_pred, target_names=["other", "fastball"], zero_division=0
+    )
     coefs = np.abs(clf.coef_[0])
     indices = np.argsort(coefs)[::-1][:top_n]
     top_features = [(feature_names[i], float(clf.coef_[0][i])) for i in indices]
-    
-    # Count non-zero coefficients (L1 sparsity)
     n_nonzero = int(np.sum(coefs > 1e-6))
     
     return {
@@ -562,22 +527,16 @@ def evaluate_cross_session_lr(train_seqs, test_seqs, feature_names, C=1.0, top_n
     }
 
 def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
-    """
-    L1 Logistic Regression using aggregate biomechanical features
-    (angles, speeds, timing) instead of per-frame flattened features.
-    """
-    # 1. Augment only the training set
     augmented_train = []
     for seq, label in train_seqs:
         augmented_train.append((seq, label))
         augmented_train.extend(augmentSequence(seq, label))
     
-    # 2. Extract aggregate features (same as Mann-Whitney uses)
     relabel_map = {0: "offspeed", 1: "fastball"}
     train_features = []
     for seq, label in augmented_train:
         feats = extractFeatures(seq, relabel_map[label])
-        if len(feats) > 1:  # skip sequences that are too short
+        if len(feats) > 1:
             train_features.append(feats)
     
     test_features = []
@@ -586,44 +545,37 @@ def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
         if len(feats) > 1:
             test_features.append(feats)
     
-    # 3. Build DataFrames and align columns
     train_df = pd.DataFrame(train_features)
     test_df = pd.DataFrame(test_features)
-    
     y_train = (train_df["class"] == "fastball").astype(int).values
     y_test = (test_df["class"] == "fastball").astype(int).values
     
-    # Drop non-numeric columns
-    feature_cols = [c for c in train_df.columns if c != "class" and train_df[c].dtype in [np.float64, np.float32, np.int64, float]]
-    
-    # Ensure both have the same columns
+    feature_cols = [
+        c for c in train_df.columns if c != "class"
+        and train_df[c].dtype in [np.float64, np.float32, np.int64, float]
+    ]
     common_cols = [c for c in feature_cols if c in test_df.columns]
-    
     X_train = train_df[common_cols].fillna(0).values
     X_test = test_df[common_cols].fillna(0).values
     
-    # 4. Scale
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # 5. Train L1 LogReg with balanced weights
     clf = LogisticRegression(
         l1_ratio=1, solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
     
-    # 6. Predict
     y_pred = clf.predict(X_test_scaled)
     acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0)
-    
-    # 7. Top features by absolute coefficient
+    report = classification_report(
+        y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0
+    )
     coefs = np.abs(clf.coef_[0])
     indices = np.argsort(coefs)[::-1][:top_n]
     top_features = [(common_cols[i], float(clf.coef_[0][i])) for i in indices]
-    
     n_nonzero = int(np.sum(coefs > 1e-6))
     
     return {
@@ -640,27 +592,19 @@ def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
     }
 
 def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
-    """
-    L1 Logistic Regression using aggregate biomechanical features, properly applied
-    to a single pitcher's directory. It performs an 80/20 stratified split, 
-    and importantly, augments ONLY the training split before evaluating on the pure test split.
-    """
-    # 1. Stratified Split
     labels = [s[1] for s in seqs]
-    # Ensure we have enough data to split
     if len(seqs) < 5 or len(set(labels)) < 2:
         return None
         
-    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=1)
-    
-    # 2. Augment only the training set
+    train_seqs, test_seqs = train_test_split(
+        seqs, test_size=test_size, stratify=labels, random_state=1
+    )
     np.random.seed(1)
     augmented_train = []
     for seq, label in train_seqs:
         augmented_train.append((seq, label))
         augmented_train.extend(augmentSequence(seq, label))
     
-    # 3. Extract aggregate features
     relabel_map = {0: "offspeed", 1: "fastball"}
     train_features = []
     for seq, label in augmented_train:
@@ -677,40 +621,37 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     if len(train_features) == 0 or len(test_features) == 0:
         return None
     
-    # 4. Build DataFrames and align columns
     train_df = pd.DataFrame(train_features)
     test_df = pd.DataFrame(test_features)
-    
     y_train = (train_df["class"] == "fastball").astype(int).values
     y_test = (test_df["class"] == "fastball").astype(int).values
     
-    feature_cols = [c for c in train_df.columns if c != "class" and train_df[c].dtype in [np.float64, np.float32, np.int64, float]]
+    feature_cols = [
+        c for c in train_df.columns if c != "class"
+        and train_df[c].dtype in [np.float64, np.float32, np.int64, float]
+    ]
     common_cols = [c for c in feature_cols if c in test_df.columns]
-    
     X_train = train_df[common_cols].fillna(0).values
     X_test = test_df[common_cols].fillna(0).values
     
-    # 5. Scale
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # 6. Train L1 LogReg
     clf = LogisticRegression(
         l1_ratio=1, solver='liblinear', C=C,
         random_state=1, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
     
-    # 7. Predict
     y_pred = clf.predict(X_test_scaled)
     acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0)
-    
+    report = classification_report(
+        y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0
+    )
     coefs = np.abs(clf.coef_[0])
     indices = np.argsort(coefs)[::-1][:top_n]
     top_features = [(common_cols[i], float(clf.coef_[0][i])) for i in indices]
-    
     n_nonzero = int(np.sum(coefs > 1e-6))
     
     return {
@@ -727,31 +668,28 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
         "feature_names": common_cols
     }
 
-def evaluate_single_session(seqs, pf_feature_names, model_type="tree", max_depth=10, n_estimators=100, top_n=10, test_size=0.2):
-    """
-    Evaluates the original per-frame feature structure on a single pitcher.
-    Performs an 80/20 split and augments the training set to mirror the L1 Logistic methodology.
-    """
-    
+def evaluate_single_session(
+    seqs, pf_feature_names, model_type="tree",
+    max_depth=10, n_estimators=100, top_n=10, test_size=0.2
+):
     labels = [s[1] for s in seqs]
     if len(seqs) < 5 or len(set(labels)) < 2:
         return None
         
-    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=42)
-    
+    train_seqs, test_seqs = train_test_split(
+        seqs, test_size=test_size, stratify=labels, random_state=42
+    )
     np.random.seed(4)
     augmented_train = []
     for seq, label in train_seqs:
         augmented_train.append((seq, label))
         augmented_train.extend(augmentSequence(seq, label))
         
-    # Build per-frame features for training set
     X_train_list, y_train_list = [], []
     for seq, label in augmented_train:
         X_train_list.append(buildFrameFeatures(seq))
         y_train_list.append(label)
     
-    # Build per-frame features for test set
     X_test_list, y_test_list = [], []
     for seq, label in test_seqs:
         X_test_list.append(buildFrameFeatures(seq))
@@ -762,24 +700,30 @@ def evaluate_single_session(seqs, pf_feature_names, model_type="tree", max_depth
     X_test = np.array(X_test_list)
     y_test = np.array(y_test_list)
     
-    # Fill NAs
     if np.isnan(X_train).any(): X_train = np.nan_to_num(X_train)
     if np.isnan(X_test).any(): X_test = np.nan_to_num(X_test)
     
     if model_type == "tree":
-        clf = DecisionTreeClassifier(max_depth=max_depth, class_weight="balanced", random_state=42)
+        clf = DecisionTreeClassifier(
+            max_depth=max_depth, class_weight="balanced", random_state=42
+        )
     else:
-        clf = RandomForestClassifier(n_estimators=n_estimators, class_weight="balanced", random_state=42)
+        clf = RandomForestClassifier(
+            n_estimators=n_estimators, class_weight="balanced", random_state=42
+        )
         
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
-    
     acc = accuracy_score(y_test, y_pred)
-    report = classification_report(y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0)
-    
+    report = classification_report(
+        y_test, y_pred, target_names=["offspeed", "fastball"], zero_division=0
+    )
     importances = clf.feature_importances_
     indices = np.argsort(importances)[::-1][:top_n]
-    top_features = [(pf_feature_names[i], float(importances[i])) for i in indices if i < len(pf_feature_names)]
+    top_features = [
+        (pf_feature_names[i], float(importances[i]))
+        for i in indices if i < len(pf_feature_names)
+    ]
     
     return {
         "accuracy": acc,
@@ -790,3 +734,4 @@ def evaluate_single_session(seqs, pf_feature_names, model_type="tree", max_depth
         "augmented_train_size": len(augmented_train),
         "test_size": len(test_seqs)
     }
+

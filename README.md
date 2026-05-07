@@ -1,6 +1,6 @@
 # PitchVision
 
-**Automated Detection of Baseball Pitch Tipping via Pose Estimation and Statistical Modeling**
+**Automated Detection of Baseball Pitch Tipping via Motion Estimation and Statistical Modeling**
 
 PitchVision is a Streamlit dashboard that processes baseball pitch videos, extracting biomechanical motion data using pose estimation and object tracking, before applying statistical and machine learning methods to identify subtle differences (tips) between fastballs and off‑speed pitches, then offering interactive superimposed visualizations for qualitative verification.
 
@@ -8,14 +8,11 @@ PitchVision is a Streamlit dashboard that processes baseball pitch videos, extra
 
 ## Overview
 
-The repository contains the following core Python files:
-
-### `pitchvision.py`  
-Main Streamlit application with four tabs:
-- **Tab 01: Motion Estimation**: Upload an `.mov`/`.mp4` pitch video to compute a pitcher's skeletal pose and glove bounding box (here in called keypoints) sequences (YOLOv8x‑Pose + custom glove YOLO + pitch windup truncation).
-- **Tab 02: Comparative Analysis**: Select two keypoint sequences to generate a spatially and temporally aligned (DTW + RANSAC) superimposed visualization, with optional kinematic feature highlighting.
-- **Tab 03: Pitch Classification**: Computes feature representations of keypoint sequences, then uses Mann-Whitney U-Testing, logistic regression, and decision trees to identify those features most discriminative in determining fastballs vs off-speeds.
-- **Tab 04: Pitch Prediction**: Uses these trained models to predict classes for newly uploaded pitch videos.
+Our Streamlit application consists of four tabs:
+- **Tab 1: Motion Estimation**: Upload an `.mov`/`.mp4` pitch video to compute a pitcher's skeletal pose and glove bounding box (here in called keypoints) sequences (YOLOv8x‑Pose + custom glove YOLO + pitch windup truncation).
+- **Tab 2: Comparative Visualization**: Select two keypoint sequences to generate a spatially and temporally aligned (DTW + RANSAC) superimposed visualization, with optional kinematic feature highlighting.
+- **Tab 3: Pitch Classification**: Computes feature representations of keypoint sequences, then uses Mann-Whitney U-Testing, logistic regression, and decision trees to identify those features most discriminative in determining fastballs vs off-speeds.
+- **Tab 4: Pitch Prediction**: Uses these trained models to predict classes for newly uploaded pitch videos.
 
 ## Setup
 
@@ -48,24 +45,43 @@ streamlit run pitchvision.py
 
 ## Organization
 
-Directory structure after usage:
+### Code Hierarchy
+
+```
+├── app.py                   # Main
+├── ui/
+│   ├── style.py             # CSS String
+│   ├── sidebar.py           # Dashboard Sidebar
+│   └── components.py        # Dashboard Panels
+├── tabs/
+│   ├── estimation.py        # Tab 1 Main
+│   ├── visualization.py     # Tab 2 Main
+│   ├── classification.py    # Tab 3 Main
+│   └── prediction.py        # Tab 4 Main
+├── processing/
+│   ├── tab1_helper.py       # Tab 1 Backend
+│   ├── tab2_helper.py       # Tab 2 Backend
+│   └── tab3_helper.py       # Tab 3/4 Backend
+└── utils.py                 # Shared Auxiliary
+```
+
+### Data Hierarchy
+
+Pitch videos and keypoint sequences are added during execution:
 
 ```
 ├── Pitches/
 │   ├── Pitcher1/
-│   │   ├── fastball1.mov
+│   │   ├── fastball_1.mov
 │   │   └── ...
-│   └── Pitcher2/
-│   │   ├── fastball1.mov
-│   │   └── ...
+│   └── ...
 ├── Keypoints/
 │   ├── Pitcher1/
-│   │   ├── fastball1.npy
+│   │   ├── fastball_1.npy
 │   │   └── ...
-│   └── Pitcher2/
-│   │   ├── fastball1.npy
-│   │   └── ...
-├── Visualizations/       # Generated Superimpositions
-└── (*.py, *.pt, etc.)
+│   └── ...
+└── Visualizations/          # From Tab 2
+    ├── Pitcher1_fastball_1_vs_offspeed_1.mp4
+    └── ...
 ```
 

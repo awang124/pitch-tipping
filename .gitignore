@@ -29,4 +29,5 @@ Visualizations/
 # POSE MODELS
 pose_model.pt
 POSE_MODEL.pt
+yolov8x-pose.pt
 
