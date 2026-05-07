@@ -14,7 +14,7 @@ from sklearn.tree import export_text
 from sklearn.model_selection import train_test_split
 
 st.set_page_config(
-    page_title="PitchVision | SARG @ JHU",
+    page_title="PitchVision",
     page_icon="⚾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -360,10 +360,10 @@ with st.sidebar:
     )
 
     pipeline_items = [
-        ("YOLOv8x-Pose", "Skeleton extraction"),
-        ("Custom Glove YOLO", "Glove localization"),
-        ("Motion-Aware Trim", "180-frame windowing"),
-        ("RANSAC Alignment", "Superimposition"),
+        ("Motion Estimation", "Pose & Glove Tracking"),
+        ("Feature Engineering", "Aggregate & Per-Frame Cues"),
+        ("Cue Identification", "Statistical Testing & ML Modeling"),
+        ("Visualization", "DTW & RANSAC Aligned Superimposition"),
     ]
     for name, desc in pipeline_items:
         st.markdown(
@@ -378,31 +378,20 @@ with st.sidebar:
             """,
             unsafe_allow_html=True
         )
-    st.markdown(
-        """
-        <div style='height: 1px; background: #1e2a3a; margin: 1.2rem 0;'></div>
-        <div style='font-size: 0.65rem; color: #334155; padding-bottom: 1rem;'>
-            Prototype — Spring 2026<br>
-            SARG · Dept of Computer Science
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
 st.markdown(
     """
     <div class='wordmark'>
         <span class='wordmark-primary'>PitchVision</span>
-        <span class='wordmark-badge'>Research Build</span>
     </div>
-    <div class='wordmark-sub'>Pitch Tipping Detection · Pose Estimation · Motion Analysis · SARG @ Johns Hopkins</div>
+    <div class='wordmark-sub'>Automated Pitch Tipping Detection via Motion Estimation and Statistical Modeling</div>
     <div class='divider'></div>
     """,
     unsafe_allow_html=True
 )
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "01  /  Extraction & Tracking", "02  /  Comparative Analysis", "03  /  ML Classification", "04  /  Predict Pitches"
+    "01: Motion Estimation", "02: Comparative Visualization", "03: Pitch Classification", "04: Pitch Prediction"
 ])
 
 @st.cache_resource
@@ -439,26 +428,24 @@ def _lr_coefficients_styler(top_features):
     )
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# TAB 1: EXTRACTION
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# TAB 1: MOTION ESTIMATION
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
 with tab1:
     st.markdown(
         """
         <div class='info-panel'>
-            Upload a raw <code>.MOV</code> or <code>.mp4</code> clip to run the full extraction pipeline: YOLOv8x skeleton detection,
-            custom-trained glove localization, and automated motion-aware 180-frame windowing.
-            Output is serialized as a structured <code>.npy</code> array for downstream analysis.
+            Upload an <code>.MOV</code> or <code>.mp4</code> video of a baseball pitch (pitcher isolated and in frame): <br> skeletal pose and glove bounding box sequences (herein called keypoint sequences) will be computed.
         </div>
         """,
         unsafe_allow_html=True
     )
     col_left, col_right = st.columns([1, 1], gap="large")
     with col_left:
-        st.markdown("<div class='section-label'>Subject Metadata</div>", unsafe_allow_html=True)
-        pitcher_name = st.text_input("Pitcher Name", "Kieran")
+        st.markdown("<div class='section-label'>Video Info</div>", unsafe_allow_html=True)
+        pitcher_name = st.text_input("Pitcher (Folder) Name", "Babe_Ruth")
         pitch_type   = st.selectbox(
-            "Pitch Classification",
+            "Pitch Class",
             ["Changeup", "Curveball", "Cutter", "Fastball", "Four-Seam Fastball",
              "Slider", "Splitter", "Two-Seam Fastball", "Other"]
         )
@@ -469,11 +456,11 @@ with tab1:
         uploaded_file = st.file_uploader(
             f"Upload {pitcher_name} · {pitch_type}",
             type=["mov", "mp4"],
-            help="Supports .MOV (iPhone/camera) and .mp4 formats."
+            help="Supports .MOV and .mp4 formats."
         )
     with col_right:
         if uploaded_file:
-            st.markdown("<div class='section-label'>Preview</div>", unsafe_allow_html=True)
+            st.markdown("<div class='section-label'>Your Video</div>", unsafe_allow_html=True)
             st.video(uploaded_file)
         else:
             st.markdown(
@@ -493,7 +480,7 @@ with tab1:
         run_col, _ = st.columns([1, 3])
         with run_col:
             run_pipeline = st.button(
-                "▶  Run Extraction Pipeline", type="primary", use_container_width=True
+                "▶  Run Motion Estimation", type="primary", width="stretch"
             )
         if run_pipeline:
             pitch_root = os.path.join(base_dir, "Pitches")
@@ -516,7 +503,7 @@ with tab1:
                 <div style='margin-top: 1.5rem;'>
                     <div style='font-family: "IBM Plex Mono", monospace; font-size: 0.62rem;
                                  letter-spacing: 0.12em; text-transform: uppercase; color: #64748b; margin-bottom: 0.8rem;'>
-                        Extraction Log
+                        Motion Estimation
                     </div>
                 </div>
                 """,
@@ -524,7 +511,7 @@ with tab1:
             )
             progress_bar = st.progress(0)
             status_text  = st.empty()
-            with st.spinner("Initializing pose / glove models:"):
+            with st.spinner("Initializing models:"):
                 pose_m, glove_m = load_models()
             success, meta = t1.processVideo(
                 video_target, kpt_target, pose_m, glove_m, progress_bar, status_text
@@ -537,7 +524,7 @@ with tab1:
                     with m1:
                         st.markdown(
                             f"""<div class='stat-card'>
-                            <div class='label'>Total Frames</div>
+                            <div class='label'># Total Frames</div>
                             <div class='value'>{meta['num_total_frames']}</div>
                             </div>""",
                             unsafe_allow_html=True
@@ -545,7 +532,7 @@ with tab1:
                     with m2:
                         st.markdown(
                             f"""<div class='stat-card'>
-                            <div class='label'>Extracted Window</div>
+                            <div class='label'># Window Frames</div>
                             <div class='value'>{meta['num_extracted_frames']}<span class='unit'>fr</span></div>
                             </div>""",
                             unsafe_allow_html=True
@@ -561,7 +548,7 @@ with tab1:
                     with m4:
                         st.markdown(
                             f"""<div class='stat-card'>
-                            <div class='label'>Clip Duration</div>
+                            <div class='label'>Video Duration (seconds)</div>
                             <div class='value'>{meta['duration']}<span class='unit'>s</span></div>
                             </div>""",
                             unsafe_allow_html=True
@@ -569,35 +556,34 @@ with tab1:
                 st.markdown(
                     f"""
                     <div class='success-panel'>
-                        ✓ &nbsp; Pipeline complete. Keypoints serialized to <code>{kpt_target}</code>
+                        ✓ &nbsp; Pose and glove sequences stored at <code>{kpt_target}</code>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# TAB 2: VISUALIZATION
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# TAB 2: COMPARATIVE VISUALIZATION
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
 with tab2:
     st.markdown(
         """
         <div class='info-panel'>
-            Select two tracked pitch sequences to generate a RANSAC-aligned superimposition.
-            Use the AI anomaly highlighter to isolate the kinematic feature flagged by your
-            classification model and visually confirm pitch-tipping behavior.
+            Select two keypoint sequences (filenames) to generate their superimposition. <br>
+            Optionally highlight a kinematic feature to manually inspect tipping cues. <br>
+            Optionally auto-select a sequence pair w/ maximal difference in highlighted feature.
         </div>
         """,
         unsafe_allow_html=True
     )
-    st.markdown("<div class='section-label'>Data Source</div>", unsafe_allow_html=True)
-    tab2_data_root = st.text_input("Pitch Sequence Directory", "keypoints/Randy/trimmed_keypoints_normalized", key="tab2_root")
+    tab2_data_root = st.text_input("Keypoint Directory", "Keypoints", key="tab2_root")
     keypoint_root = os.path.join(base_dir, tab2_data_root)
     if not os.path.exists(keypoint_root):
         st.markdown(
             f"""
             <div class='warn-panel'>
-                ⚠ &nbsp; Keypoints directory not found at <code>{keypoint_root}</code>.
-                Run the extraction pipeline in Tab 01 first.
+                ⚠ &nbsp; No keypoint sequences found in <code>{keypoint_root}</code>.
+                Upload your videos in Tab 01 to compute them.
             </div>
             """,
             unsafe_allow_html=True
@@ -612,8 +598,8 @@ with tab2:
             st.markdown(
                 f"""
                 <div class='warn-panel'>
-                    ⚠ &nbsp; Fewer than two tracked pitches found in <code>{keypoint_root}</code>.
-                    At least two <code>.npy</code> sequences are required for comparison.
+                    ⚠ &nbsp; Fewer than two keypoint sequences found in <code>{keypoint_root}</code>.
+                    Upload your videos in Tab 01 to compute more.
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -626,10 +612,6 @@ with tab2:
                     st.session_state.best_pitch2 = npy_files[1]
                 else:
                     st.session_state.best_pitch2 = npy_files[0]
-            st.markdown(
-                "<div class='section-label'>Pitch Sequence Selection</div>",
-                unsafe_allow_html=True
-            )
             sel_col1, sel_col2 = st.columns(2, gap="large")
             base_idx = npy_files.index(st.session_state.best_pitch1)\
                 if st.session_state.best_pitch1 in npy_files else 0
@@ -637,21 +619,14 @@ with tab2:
                 if st.session_state.best_pitch2 in npy_files else 1
             with sel_col1:
                 base_pitch = st.selectbox(
-                    "Reference Sequence (rendered white)", npy_files, index=base_idx
+                    "Sequence 1 (White)", npy_files, index=base_idx
                 )
             with sel_col2:
                 compare_pitch = st.selectbox(
-                    "Comparison Sequence (rendered blue)",  npy_files, index=comp_idx
+                    "Sequence 2 (Blue)",  npy_files, index=comp_idx
                 )
             st.session_state.best_pitch1 = base_pitch
             st.session_state.best_pitch2 = compare_pitch
-            st.markdown(
-                """
-                <div style='height: 1px; background: #1e2a3a; margin: 1.5rem 0;'></div>
-                <div class='section-label'>Kinematic Anomaly Highlighter</div>
-                """,
-                unsafe_allow_html=True
-            )
             FEATURES = [
                 "None",
                 "Glove",
@@ -664,7 +639,7 @@ with tab2:
             ]
             feat_col, btn_col = st.columns([2, 2], gap="large")
             with feat_col:
-                highlight_target = st.selectbox("Flagged Kinematic Feature", FEATURES)
+                highlight_target = st.selectbox("Kinematic Feature", FEATURES)
             try:
                 with btn_col:
                     if highlight_target == "None":
@@ -674,12 +649,12 @@ with tab2:
                     )
                     if not st.button(
                         f"Auto-Select Extremal Matchup  →  {highlight_target.split(' (')[0]}",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         raise Exception
                     with st.spinner(
                         f"Scanning {len(npy_files)} sequences for maximum "
-                        f"{highlight_target.split(' (')[0]} divergence:"
+                        f"{highlight_target.split(' (')[0]} difference:"
                     ):
                         best_fb, best_os = t2.findBestPitchPair(keypoint_root, highlight_target)
                         if best_fb and best_os:
@@ -690,7 +665,7 @@ with tab2:
                         st.markdown(
                             """
                             <div class='warn-panel'>
-                                Insufficient labeled fastball/offspeed pairs in the keypoints directory to perform auto-selection.
+                                Not enough labeled fastball / offspeed pairs in keypoints directory to perform auto-selection.
                             </div>
                             """,
                             unsafe_allow_html=True
@@ -701,7 +676,7 @@ with tab2:
             gen_col, _ = st.columns([1, 3])
             with gen_col:
                 generate = st.button(
-                    "Generate Superimposition", type="primary", use_container_width=True
+                    "Generate Superimposition", type="primary", width="stretch"
             )
             if generate:
                 out_dir = os.path.join(base_dir, "Visualizations")
@@ -709,7 +684,7 @@ with tab2:
                 base_name = os.path.splitext(base_pitch)[0].replace("/", "_")
                 comp_name = os.path.splitext(compare_pitch)[0].replace("/", "_")
                 out_video = os.path.join(out_dir, f"{base_name}_vs_{comp_name}.mp4")
-                with st.spinner("Running RANSAC spatial alignment and frame-synchronised overlay:"):
+                with st.spinner("Running DTW and RANSAC:"):
                     highlight = highlight_target.split(" (")[0].lower().replace(" ", "_")\
                         if highlight_target != "None" else ""
                     t2.visualizeDifferences(
@@ -726,7 +701,7 @@ with tab2:
                 st.markdown(
                     f"""
                     <div class='success-panel'>
-                        ✓ &nbsp; Superimposition complete. Output saved to <code>{out_video}</code>
+                        ✓ &nbsp; Superimposition created, saved to <code>{out_video}</code>
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -740,7 +715,7 @@ with tab2:
                 with r1:
                     st.markdown(
                         f"""<div class='stat-card'>
-                        <div class='label'>Reference</div>
+                        <div class='label'>Sequence 1</div>
                         <div style='font-family:"IBM Plex Mono",monospace; font-size:0.75rem; color:#cbd5e1; margin-top:4px; word-break:break-all;'>{base_pitch}</div>
                         </div>""",
                         unsafe_allow_html=True
@@ -748,7 +723,7 @@ with tab2:
                 with r2:
                     st.markdown(
                         f"""<div class='stat-card'>
-                        <div class='label'>Comparison</div>
+                        <div class='label'>Sequence 2</div>
                         <div style='font-family:"IBM Plex Mono",monospace; font-size:0.75rem; color:#38bdf8; margin-top:4px; word-break:break-all;'>{compare_pitch}</div>
                         </div>""",
                         unsafe_allow_html=True
@@ -762,17 +737,17 @@ with tab2:
                         unsafe_allow_html=True
                     )
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# TAB 3: FEATURE SIGNIFICANCE
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# TAB 3: PITCH CLASSIFICATION
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
 with tab3:
     st.markdown(
         """
         <div class='info-panel'>
-            <b>Three analytical tiers:</b><br>
-            • <b>Aggregate Feature L1 LogReg</b> isolates core biomechanical tells via sparse regularization (75% accuracy).<br>
-            • <b>Per‑frame Decision Tree</b> tracks granular frame-by-frame positional data.<br>
-            • <b>Mann‑Whitney U Test</b> statistically validates specific features (e.g. glove_speed_max).
+            We present three separate approaches for identifying features significant in discriminating pitch class as cues: <br>
+            • <b>Decision Tree</b>: features most decreasing overall impurity after partitions are most indicative of pitch class. <br>
+            • <b>Logistic Regression</b>: largest weights in magnitude correspond to features most indicative of pitch class.<br>
+            • <b>Mann-Whitney U-Test</b>: identifies features whose values least overlap (best separate) between fastball and off-speed pitches.<br>
         </div>
         """,
         unsafe_allow_html=True
@@ -781,80 +756,80 @@ with tab3:
     if not os.path.exists(keypoints_root):
         st.markdown(f"<div class='warn-panel'> Keypoints directory not found at `{keypoints_root}`. Run Tab 1 first.</div>", unsafe_allow_html=True)
     else:
-        with st.spinner("Loading and evaluating cross-session per‑frame sequences (this may take a moment)..."):
-            st.markdown("<div class='section-label'>Evaluation Setup</div>", unsafe_allow_html=True)
+        with st.spinner("Training (this may take a few minutes):"):
             eval_mode = st.radio(
-                "Evaluation Mode",
-                ["Single-Pitcher (80/20 Split & Augment)", "Cross-Session (Train on A, Test on B)"],
+                "Evaluation Type",
+                ["Intra-Pitcher (80/20 Split)", "Inter-Pitcher (Train on John, Test on James)"],
                 horizontal=True
             )
             
-            if eval_mode == "Cross-Session (Train on A, Test on B)":
+            if eval_mode == "Inter-Pitcher (Train on John, Test on James)":
                 c1, c2 = st.columns(2)
                 with c1:
-                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/Kieran")
+                    train_root_rel = st.text_input("Training Keypoints Directory", "Keypoints/Kieran")
                 with c2:
-                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "Keypoints/Randy")
+                    test_root_rel = st.text_input("Evaluation Keypoints Directory", "Keypoints/Randy")
                 train_root = os.path.join(base_dir, train_root_rel)
                 test_root = os.path.join(base_dir, test_root_rel)
                 
                 raw_seqs_train, n_frames, pf_feature_names = t3.loadFrameDataset(train_root)
                 raw_seqs_test, _, _ = t3.loadFrameDataset(test_root)
             else:
-                data_root_rel = st.text_input("Pitcher Sequence Directory", "Keypoints/Randy")
+                data_root_rel = st.text_input("Keypoints Directory", "Keypoints/Randy")
                 data_root = os.path.join(base_dir, data_root_rel)
                 
                 all_seqs, n_frames, pf_feature_names = t3.loadFrameDataset(data_root)
-                raw_seqs_train = all_seqs  # We'll split it inside the functions
+                raw_seqs_train = all_seqs
                 raw_seqs_test = []
             
-            if eval_mode == "Cross-Session (Train on A, Test on B)":
+            if eval_mode == "Inter-Pitcher (Train on John, Test on James)":
                 if len(raw_seqs_train) < 3 or len(raw_seqs_test) < 1:
                     st.warning(f"Not enough labeled sequences found. Train: {len(raw_seqs_train)}, Test: {len(raw_seqs_test)}.")
                 else:
                     n_fastball = sum(1 for s, l in raw_seqs_train if l == 1)
                     n_other = len(raw_seqs_train) - n_fastball
-                    st.markdown(f"<div class='success-panel'> Session 1 (Train): {n_fastball} fastball, {n_other} offspeed. Session 2 (Test): {len(raw_seqs_test)} sequences. Features per frame: {t3.N_FRAME_FEATURES}.</div>", unsafe_allow_html=True)
-                    
-                    st.markdown("<div class='section-label'> Decision Tree (Cross-Session Validation)</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-label'>Decision Tree</div>", unsafe_allow_html=True)
                     dt_results = t3.evaluate_cross_session(raw_seqs_train, raw_seqs_test, pf_feature_names, model_type="tree", max_depth=10, top_n=10)
                     st.markdown(f"**Augmented Training Set Size:** {dt_results['augmented_train_size']} sequences")
+                    st.markdown(f"**Test Set Size:** {dt_results['test_size']} sequences")
                     col_acc, col_rep = st.columns([1, 2])
                     with col_acc:
-                        st.metric("Test Accuracy (Session 2)", f"{dt_results['accuracy']:.3f}")
+                        st.metric("Test Accuracy", f"{dt_results['accuracy']:.3f}")
                     with col_rep:
-                        st.text("Classification Report:\n" + dt_results['classification_report'])
-                    st.markdown("**Top 10 most important invariant features:**")
+                        st.text("Test Report:\n" + dt_results['classification_report'])
+                    st.markdown("**Top 10 Most Discriminative Features:**")
                     for feat, imp in dt_results['top_features']:
                         st.write(f"- `{feat}` ({imp:.4f})")
                         
-                    st.markdown("<div class='section-label' style='margin-top:2rem;'> ⭐ Aggregate Feature L1 LogReg (Cross-Session Validation)</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'>Logistic Regression</div>", unsafe_allow_html=True)
                     agg_results = t3.evaluate_cross_session_aggregate_lr(raw_seqs_train, raw_seqs_test, C=1.0, top_n=10)
-                    lr_m1, lr_m2, lr_m3 = st.columns(3)
+                    lr_m1, lr_m2, lr_m3, lr_m4 = st.columns(4)
                     with lr_m1:
-                        st.metric("Test accuracy (session 2)", f"{agg_results['accuracy']:.3f}")
+                        st.metric("Test Accuracy", f"{agg_results['accuracy']:.3f}")
                     with lr_m2:
-                        st.metric("L1 active features", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
+                        st.metric("# Features Retained", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
                     with lr_m3:
-                        st.metric("Augmented train size", f"{agg_results['augmented_train_size']}")
+                        st.metric("Augmented Training Set Size", f"{agg_results['augmented_train_size']}")
+                    with lr_m4:
+                        st.metric("Test Set Size", f"{agg_results['test_size']}")
                     lr_coef_col, lr_rep_col = st.columns([1.2, 1])
                     with lr_coef_col:
                         st.markdown(
-                            "<div class='lr-table-title'>Top L1 coefficients — hue = direction (fastball vs offspeed), intensity = |β|</div>",
+                            "<div class='lr-table-title'>Top 10 Most Discriminative Features</div>",
                             unsafe_allow_html=True,
                         )
                         _n_lr = len(agg_results["top_features"])
                         st.dataframe(
                             _lr_coefficients_styler(agg_results["top_features"]),
                             hide_index=True,
-                            use_container_width=True,
+                            width="stretch",
                             height=min(460, 48 + _n_lr * 38),
                         )
                     with lr_rep_col:
                         st.markdown("<div style='height:1.35rem;'></div>", unsafe_allow_html=True)
                         st.markdown(
                             "<div class='stat-card' style='margin-bottom:0;'>"
-                            "<div class='label'>Classification report</div>"
+                            "<div class='label'>Test Report</div>"
                             f"<pre class='model-report-pre'>{html.escape(agg_results['classification_report'])}</pre>"
                             "</div>",
                             unsafe_allow_html=True,
@@ -865,21 +840,18 @@ with tab3:
                 else:
                     n_fastball = sum(1 for s, l in all_seqs if l == 1)
                     n_other = len(all_seqs) - n_fastball
-                    st.markdown(f"<div class='success-panel'> Pitcher total: {n_fastball} fastball, {n_other} offspeed sequences. Running stratified 80/20 split and augmenting ONLY training.</div>", unsafe_allow_html=True)
-                    
-                    st.markdown("<div class='section-label' style='margin-top:2rem;'> Decision Tree (Legacy Per-Frame Model)</div>", unsafe_allow_html=True)
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'>Decision Tree</div>", unsafe_allow_html=True)
                     dt_results = t3.evaluate_single_session(all_seqs, pf_feature_names, model_type="tree", top_n=10)
                     if dt_results:
                         st.markdown(f"**Augmented Training Set Size:** {dt_results['augmented_train_size']} sequences")
+                        st.markdown(f"**Test Set Size:** {dt_results['test_size']} sequences")
                         c_acc1, c_rep1 = st.columns([1, 2])
                         with c_acc1:
-                            st.metric("Test Accuracy (Holdout)", f"{dt_results['accuracy']:.3f}")
+                            st.metric("Test Accuracy", f"{dt_results['accuracy']:.3f}")
                         with c_rep1:
-                            st.text("Classification Report:\n" + dt_results['classification_report'])
+                            st.text("Test Report:\n" + dt_results['classification_report'])
                             
-                    st.markdown("<div class='section-label' style='margin-top:2rem;'> ⭐ Single-Pitcher Aggregate L1 LogReg (80/20 Split)</div>", unsafe_allow_html=True)
-                    st.markdown("*Uses ~50 biomechanical summary stats, properly evaluating against a completely pure internal holdout without cross-pitcher leakage.*")
-                    
+                    st.markdown("<div class='section-label' style='margin-top:2rem;'>Logistic Regression</div>", unsafe_allow_html=True)
                     agg_results = t3.evaluate_single_session_aggregate_lr(all_seqs, test_size=0.2, C=1.0, top_n=10)
                     if not agg_results:
                         st.error("Error evaluating single session: Not enough samples per class to perform a stratified split.")
@@ -888,39 +860,38 @@ with tab3:
                         st.session_state["single_pitcher_scaler"] = agg_results["scaler"]
                         st.session_state["single_pitcher_features"] = agg_results["feature_names"]
                         
-                        sp_m1, sp_m2, sp_m3 = st.columns(3)
+                        sp_m1, sp_m2, sp_m3, sp_m4 = st.columns(4)
                         with sp_m1:
-                            st.metric("Test accuracy (holdout)", f"{agg_results['accuracy']:.3f}")
+                            st.metric("Test Accuracy", f"{agg_results['accuracy']:.3f}")
                         with sp_m2:
-                            st.metric("L1 active features", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
+                            st.metric("Features Retained", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
                         with sp_m3:
-                            st.metric("Held-out pitches", f"{agg_results['test_size']}")
-                        st.caption(
-                            f"Training: {agg_results['train_base_size']} real pitches → augmented to {agg_results['augmented_train_size']} samples."
-                        )
+                            st.metric("Augmented Training Set Size", f"{agg_results['augmented_train_size']}")
+                        with sp_m4:
+                            st.metric("Test Set Size", f"{agg_results['test_size']}")
                         sp_lr_tab, sp_lr_rep = st.columns([1.2, 1])
                         with sp_lr_tab:
                             st.markdown(
-                                "<div class='lr-table-title'>Top L1 coefficients — hue = direction, intensity = |β|</div>",
+                                "<div class='lr-table-title'>Top 10 Most Discriminative Features:</div>",
                                 unsafe_allow_html=True,
                             )
                             _n_splr = len(agg_results["top_features"])
                             st.dataframe(
                                 _lr_coefficients_styler(agg_results["top_features"]),
                                 hide_index=True,
-                                use_container_width=True,
+                                width="stretch",
                                 height=min(460, 48 + _n_splr * 38),
                             )
                         with sp_lr_rep:
                             st.markdown("<div style='height:1.35rem;'></div>", unsafe_allow_html=True)
                             st.markdown(
                                 "<div class='stat-card' style='margin-bottom:0;'>"
-                                "<div class='label'>Classification report</div>"
+                                "<div class='label'>Test Report</div>"
                                 f"<pre class='model-report-pre'>{html.escape(agg_results['classification_report'])}</pre>"
                                 "</div>",
                                 unsafe_allow_html=True,
                             )
-    st.markdown("<div class='section-label' style='margin-top:2rem;'> Pairwise Statistical Significance (Fastball vs. Offspeed) – Aggregate Features</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label' style='margin-top:2rem;'>Mann-Whitney U-Test</div>", unsafe_allow_html=True)
     seqs = t3.loadSequences(keypoints_root)
     relabel = dict.fromkeys(
         ["cutter", "fastball", "four_seam_fastball", "two_seam_fastball"], "fastball"
@@ -942,18 +913,17 @@ with tab3:
             mann_table = t3.mannWhitney(features_df, n_show=15)
             st.dataframe(
                 mann_table.style.format({"p-value": "{:.4f}", "Effect Size": "{:.3f}"}),
-                hide_index=True, use_container_width=True, height=400
+                hide_index=True, width="stretch", height=400
             )
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# TAB 4: PREDICT PITCHES
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# TAB 4: PITCH PREDICTION
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
 with tab4:
     st.markdown(
         """
         <div class='info-panel'>
-            <b>Live Inference Engine:</b> Upload a raw <code>.mov</code> or <code>.mp4</code> video of an unlabelled pitch.
-            The pipeline will automatically extract the skeleton, isolate the throwing motion, and predict the pitch class using the model from Tab 03.
+            Upload a new <code>.MOV</code> or <code>.mp4</code> video of an unlabelled pitch. With our trained models from Tab 03, we can compute its motion (this may require a few minutes) and predict its class.
         </div>
         """,
         unsafe_allow_html=True
@@ -963,14 +933,13 @@ with tab4:
         st.markdown(
             f"""
             <div class='warn-panel'>
-                ⚠ &nbsp; No Single-Pitcher model found in memory. Please go to Tab 03, select Single-Pitcher evaluation, and let the model train first.
+                ⚠ &nbsp; No trained model found: visit Tab 03 to train.
             </div>
             """,
             unsafe_allow_html=True
         )
     else:
-        st.markdown("<div class='section-label'>Upload Raw Video for Prediction</div>", unsafe_allow_html=True)
-        pred_video = st.file_uploader("Upload an unlabelled pitching video", type=["mov", "mp4"], key="pred_upload")
+        pred_video = st.file_uploader("Upload A New Pitch Video", type=["mov", "mp4"], key="pred_upload")
         
         if pred_video is not None:
             col_pred1, col_pred2 = st.columns([1, 1], gap="large")
@@ -978,7 +947,7 @@ with tab4:
                 st.video(pred_video)
             
             with col_pred2:
-                if st.button("▶ Run Full Inference Pipeline", type="primary", use_container_width=True):
+                if st.button("▶ Run Pitch Prediction", type="primary", width="stretch"):
                     pred_vid_target = os.path.join(base_dir, "Pitches", "temp_prediction.mov")
                     pred_kpt_target = os.path.join(base_dir, "Keypoints", "temp_prediction.npy")
                     os.makedirs(os.path.dirname(pred_vid_target), exist_ok=True)
@@ -989,29 +958,26 @@ with tab4:
                     progress_bar = st.progress(0)
                     status_text  = st.empty()
                     
-                    with st.spinner("Initializing models & tracking pose..."):
+                    with st.spinner("Initializing models:"):
                         pose_m, glove_m = load_models()
                         success, meta = t1.processVideo(
                             pred_vid_target, pred_kpt_target, pose_m, glove_m, progress_bar, status_text
                         )
-                        
                     if success:
                         progress_bar.empty()
                         status_text.empty()
-                        st.markdown("<div class='success-panel'>✓ Skeleton successfully tracked and windowed. Analyzing kinematics...</div>", unsafe_allow_html=True)
-                        
                         seq = np.load(pred_kpt_target, allow_pickle=True)
                         if isinstance(seq, np.ndarray) and seq.dtype == object:
                             seq = seq.tolist()
                             
-                        # Extract features
                         try:
                             raw_feats = t3.extractFeatures(seq, label="Unknown")
                             if len(raw_feats) <= 1:
                                 st.error("Extracted sequence was empty or malformed.")
                             else:
                                 if "single_pitcher_clf" not in st.session_state:
-                                    st.warning("⚠️ No active model found. Please run the model evaluation in **Tab 3** first to initialize the pitch classifier for this pitcher.")
+
+                                    st.warning("⚠ &nbsp; No trained model found: visit Tab 03 to train.")
                                 else:
                                     clf = st.session_state["single_pitcher_clf"]
                                     scaler = st.session_state["single_pitcher_scaler"]
@@ -1030,14 +996,14 @@ with tab4:
                                 st.markdown(
                                     f"""
                                     <div class='stat-card' style='background: #1e3a8a; border-color: #3b82f6;'>
-                                        <div class='label' style='color: #bae6fd;'>AI Pitch Prediction</div>
+                                        <div class='label' style='color: #bae6fd;'>Prediction</div>
                                         <div class='value' style='font-size: 2.2rem;'>{pred_class} <span style='font-size: 1rem; color: #93c5fd; font-weight: normal;'>({max_prob:.1f}% Match)</span></div>
                                     </div>
                                     """,
                                     unsafe_allow_html=True
                                 )
                                 
-                                st.markdown("<div class='section-label' style='margin-top:2rem;'>Top Contributing Mechanics</div>", unsafe_allow_html=True)
+                                st.markdown("<div class='section-label' style='margin-top:2rem;'>Top Contributing Features</div>", unsafe_allow_html=True)
                                 
                                 contribs = X_test_scaled[0] * clf.coef_[0]
                                 contrib_data = []
@@ -1061,7 +1027,8 @@ with tab4:
                                             "Net Contribution": "{:+.4f}"
                                         }).background_gradient(subset=["Net Contribution"], cmap="RdBu_r").set_properties(**{"font-family": "monospace"}, subset=["Feature", "Net Contribution"]),
                                         hide_index=True,
-                                        use_container_width=True
+                                        width="stretch"
                                     )
                         except Exception as e:
                             st.error(f"Error analyzing kinematics: {e}")
+
