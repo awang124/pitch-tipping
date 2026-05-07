@@ -2,10 +2,21 @@ import os
 import cv2
 import numpy as np
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# GLOVE DETECTION
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
 def detectGlove(model, frame, bounds, conf=0.05):
+    """
+    Detect the glove bounding box in a frame.
+
+    Parameters
+    ----------
+    model: YOLO model for glove detection.
+    frame: Image frame (numpy array).
+    bounds: Optional (x1, y1, x2, y2) bounding box of the pitcher.
+    conf: Confidence threshold.
+
+    Returns
+    -------
+    Bounding box (x1, y1, x2, y2) or None if not found.
+    """
     res = model.predict(frame, conf=conf, verbose=False)[0]
     if res.boxes is None:
         return None
@@ -21,10 +32,19 @@ def detectGlove(model, frame, bounds, conf=0.05):
             return x1, y1, x2, y2
     return boxes[0][:4]
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# KEYPOINT TRUNCATION
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
 def getThrowingArm(kpts):
+    """
+    Determine whether the pitcher is right‑handed by comparing
+    horizontal ranges of right vs left wrist relative to shoulders.
+
+    Parameters
+    ----------
+    kpts: Array of keypoints (T, 17, 2).
+
+    Returns
+    -------
+    True if right‑handed, False otherwise.
+    """
     relxr = kpts[:, 10, 0] - kpts[:, 6, 0]
     relxl = kpts[:,  9, 0] - kpts[:, 5, 0]
     for arr in (relxr, relxl):
@@ -35,6 +55,18 @@ def getThrowingArm(kpts):
     return ranger > rangel
 
 def getForwardDirection(relx):
+    """
+    Determine the forward direction of motion by comparing
+    mean relative x‑positions in early vs late frames.
+
+    Parameters
+    ----------
+    relx: Array of wrist‑shoulder x offsets over time.
+
+    Returns
+    -------
+    1 if moving left‑to‑right, -1 if moving right‑to‑left.
+    """
     if (end := int(0.9 * len(relx))) <= (start := int(0.1 * len(relx))):
         return 1
     smean = np.nanmean(relx[:start]) if not np.all(np.isnan(relx[:start])) else 0
@@ -42,6 +74,18 @@ def getForwardDirection(relx):
     return 2 * (emean > smean) - 1
 
 def findWindupEnd(kpts):
+    """
+    Find frame index where windup ends / release phase begins
+    using throwing‑side wrist‑shoulder horizontal displacement.
+
+    Parameters
+    ----------
+    kpts: Array of keypoints (T, 17, 2).
+
+    Returns
+    -------
+    Frame index corresponding to the end of the windup.
+    """
     arm = getThrowingArm(kpts)
     shoulder, wrist = (6, 10) if arm else (5, 9)
     shoulder, wrist = kpts[:, shoulder, 0], kpts[:, wrist, 0]
@@ -58,10 +102,20 @@ def findWindupEnd(kpts):
             return i
     return minidx
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# POSE ESTIMATION
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
 def findPitcher(persons, frame_shape):
+    """
+    Identify pitcher among detected person
+    as person closest to center of frame.
+
+    Parameters
+    ----------
+    persons: Array of detected person keypoints.
+    frame_shape: (height, width, channels).
+
+    Returns
+    -------
+    Index of the chosen person.
+    """
     h, w, _ = frame_shape
     return np.argmin([
         np.min(np.linalg.norm(kpts - [w/2, h/2], axis=1))
@@ -69,6 +123,22 @@ def findPitcher(persons, frame_shape):
     ])
 
 def detectKeypoints(cap, pose_model, glove_model, progress, status):
+    """
+    Process a video frame‑by‑frame to extract
+    pitcher keypoints and glove boxes.
+
+    Parameters
+    ----------
+    cap: OpenCV VideoCapture object.
+    pose_model: YOLO pose model.
+    glove_model: YOLO glove model.
+    progress: Streamlit progress bar.
+    status: Streamlit status element.
+
+    Returns
+    -------
+    Tuple (list of dicts with 'keypoints' and 'glove_box', total frame count).
+    """
     nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fridx, kpts = 0, []
     while True:
@@ -77,10 +147,14 @@ def detectKeypoints(cap, pose_model, glove_model, progress, status):
         if not fridx % 10:
             progress.progress(min((fridx + 1) / nframes, 1.0))
             status.text(f"Process frame {fridx + 1} / {nframes}")
+
+        ### COMPUTE POSES
         res = pose_model(frame[1], verbose=False)[0]
         if not (res.keypoints and len(persons := res.keypoints.xy)):
             fridx += 1
             continue
+
+        ### ISOLATE PITCHER
         idx = findPitcher(persons, frame[1].shape)
         target_kpts = persons.cpu().numpy()[idx]
         try:
@@ -89,6 +163,8 @@ def detectKeypoints(cap, pose_model, glove_model, progress, status):
             pitcher_box = [xmin, ymin, xmax, ymax]
         except:
             pitcher_box = None
+
+        ### TRACK GLOVE
         if (glove_box := detectGlove(glove_model, frame[1], pitcher_box)) is None:
             glove_box = [-1] * 4
         kpts.append({"keypoints": target_kpts, "glove_box": glove_box})
@@ -96,10 +172,30 @@ def detectKeypoints(cap, pose_model, glove_model, progress, status):
     return kpts, nframes
 
 def processVideo(video_path, output_path, pose_model, glove_model, progress, status):
+    """
+    Run full extraction pipeline on a video file.
+
+    Parameters
+    ----------
+    video_path: Path to input video.
+    output_path: Path for the output .npy file.
+    pose_model: YOLO pose model.
+    glove_model: YOLO glove model.
+    progress: Streamlit progress bar.
+    status: Streamlit status text.
+
+    Returns
+    -------
+    Tuple (success boolean, metadata dict).
+    """
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
+
+    ### COMPUTE POSE AND GLOVE SEQUENCES
     kpts, nframes = detectKeypoints(cap, pose_model, glove_model, progress, status)
     cap.release()
+
+    ### TRUNCATE TO UP TO END OF WINDUP
     status.text("Truncating pitch to windup")
     progress.progress(1.0)
     only_kpts = np.array([f["keypoints"] for f in kpts])
@@ -108,6 +204,8 @@ def processVideo(video_path, output_path, pose_model, glove_model, progress, sta
         k: (np.zeros_like(v) if hasattr(v, "__len__") else 0) for k, v in kpts[0].items()
     }
     kpts = ([zero_f] * max(0, 180 - end)) + kpts[max(0, end - 180):end]
+
+    ### SAVE RESULT AND METADATA
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     np.save(output_path, np.array(kpts))
     meta = {

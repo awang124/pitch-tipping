@@ -18,7 +18,7 @@ Our Streamlit application consists of four tabs:
 
 ### Prerequisites
 - Python ≥ 3.10
-- [FFmpeg](https://ffmpeg.org/) (for video transcoding in Tab 02 only, which uses libx264 coding)
+- [FFmpeg](https://ffmpeg.org/) (to transcode generated superimpositions in Tab 02, to make them visible in a browser: this uses libx264 coding, and may require manual setup)
 
 ### Dependencies
 Create a virtual environment and install required packages:
