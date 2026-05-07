@@ -194,33 +194,40 @@ def extractFeatures(seq, label, fps=60):
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 def loadSequences(root):
     seqs = []
+    file_paths = []
     for dirpath, _, filenames in os.walk(root):
         for f in filenames:
-            if not f.lower().endswith(".npy"):
-                continue
-            elif "unlabel" in (name := f.lower()):
-                continue
-            elif "changeup" in name:
-                label = "changeup"
-            elif "curveball" in name:
-                label = "curveball"
-            elif "cutter" in name:
-                label = "cutter"
-            elif "four_seam_fastball" in name:
-                label = "four_seam_fastball"
-            elif "slider" in name:
-                label = "slider"
-            elif "splitter" in name:
-                label = "splitter"
-            elif "two_seam_fastball" in name:
-                label = "two_seam_fastball"
-            elif "fast" in name:
-                label = "fastball"
-            elif "off" in name:
-                label = "offspeed"
-            else:
-                label = "other"
-            seqs.append((np.load(os.path.join(dirpath, f), allow_pickle=True), label))
+            file_paths.append(os.path.join(dirpath, f))
+    
+    file_paths.sort() # Guarantee deterministic order
+    
+    for path in file_paths:
+        f = os.path.basename(path)
+        if not f.lower().endswith(".npy"):
+            continue
+        elif "unlabel" in (name := f.lower()):
+            continue
+        elif "changeup" in name:
+            label = "changeup"
+        elif "curveball" in name:
+            label = "curveball"
+        elif "cutter" in name:
+            label = "cutter"
+        elif "four_seam_fastball" in name:
+            label = "four_seam_fastball"
+        elif "slider" in name:
+            label = "slider"
+        elif "splitter" in name:
+            label = "splitter"
+        elif "two_seam_fastball" in name:
+            label = "two_seam_fastball"
+        elif "fast" in name:
+            label = "fastball"
+        elif "off" in name:
+            label = "offspeed"
+        else:
+            label = "other"
+        seqs.append((np.load(path, allow_pickle=True), label))
     return seqs
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -344,6 +351,7 @@ def makeFrameFeatureNames(n_frames):
 
 def loadFrameDataset(keypoints_root):
     npy_files = glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
+    npy_files.sort() # Guarantee deterministic order
     # Filter to only use labeled data files
     npy_files = [
         f for f in npy_files 
@@ -442,7 +450,7 @@ def evaluate_cross_session_lr(train_seqs, test_seqs, feature_names, C=1.0, top_n
     
     # 4. Train L1 Logistic Regression
     clf = LogisticRegression(
-        l1_ratio=1.0, solver='liblinear', C=C,
+        penalty='l1', solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -520,7 +528,7 @@ def evaluate_cross_session_aggregate_lr(train_seqs, test_seqs, C=1.0, top_n=10):
     
     # 5. Train L1 LogReg with balanced weights
     clf = LogisticRegression(
-        l1_ratio=1.0, solver='liblinear', C=C,
+        penalty='l1', solver='liblinear', C=C,
         class_weight="balanced", random_state=42, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
@@ -562,10 +570,10 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     if len(seqs) < 5 or len(set(labels)) < 2:
         return None
         
-    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=32)
+    train_seqs, test_seqs = train_test_split(seqs, test_size=test_size, stratify=labels, random_state=1)
     
     # 2. Augment only the training set
-    np.random.seed(4)  # Seed optimized for stable 75% accuracy plateau
+    np.random.seed(1)
     augmented_train = []
     for seq, label in train_seqs:
         augmented_train.append((seq, label))
@@ -608,8 +616,8 @@ def evaluate_single_session_aggregate_lr(seqs, test_size=0.2, C=1.0, top_n=10):
     
     # 6. Train L1 LogReg
     clf = LogisticRegression(
-        l1_ratio=1.0, solver='liblinear', C=C,
-        random_state=42, max_iter=10000
+        penalty='l1', solver='liblinear', C=C,
+        random_state=1, max_iter=10000
     )
     clf.fit(X_train_scaled, y_train)
     
