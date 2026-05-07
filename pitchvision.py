@@ -396,7 +396,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 @st.cache_resource
 def load_models():
-    return ultralytics.YOLO("POSE_MODEL.pt"), ultralytics.YOLO("GLOVE_MODEL.pt")
+    return ultralytics.YOLO("yolov8x-pose.pt"), ultralytics.YOLO("GLOVE_MODEL.pt")
 
 
 def _lr_coefficients_styler(top_features):

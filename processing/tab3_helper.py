@@ -202,9 +202,7 @@ def loadSequences(root):
     
     for path in file_paths:
         f = os.path.basename(path)
-        if not f.lower().endswith(".npy"):
-            continue
-        elif "unlabel" in (name := f.lower()):
+        if not (name := f.lower()).endswith(".npy"):
             continue
         elif "changeup" in name:
             label = "changeup"
@@ -225,7 +223,7 @@ def loadSequences(root):
         elif "off" in name:
             label = "offspeed"
         else:
-            label = "other"
+            continue
         seqs.append((np.load(path, allow_pickle=True), label))
     return seqs
 
