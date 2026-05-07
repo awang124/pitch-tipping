@@ -7,4 +7,5 @@ torch
 torchvision
 ultralytics
 streamlit
+fastdtw
 

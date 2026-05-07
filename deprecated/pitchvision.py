@@ -1,17 +1,12 @@
-import html
 import os
 import subprocess
 import ultralytics
 import pandas as pd
-import numpy as np
 import streamlit as st
 
 import processing.tab1_helper as t1
 import processing.tab2_helper as t2
 import processing.tab3_helper as t3
-
-from sklearn.tree import export_text
-from sklearn.model_selection import train_test_split
 
 st.set_page_config(
     page_title="PitchVision | SARG @ JHU",
@@ -188,25 +183,6 @@ st.markdown(
         font-size: 0.82rem;
         color: #86efac;
         line-height: 1.6;
-    }
-
-    /* ── ML report / coefficient tables ─────────────────────────────────── */
-    .model-report-pre {
-        font-family: var(--mono);
-        font-size: 0.72rem;
-        color: #cbd5e1;
-        line-height: 1.5;
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-    }
-    .lr-table-title {
-        font-family: var(--mono);
-        font-size: 0.58rem;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: var(--muted);
-        margin: 0 0 0.5rem 0;
     }
 
     /* ── Tabs ───────────────────────────────────────────────────────────── */
@@ -401,43 +377,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "01  /  Extraction & Tracking", "02  /  Comparative Analysis", "03  /  ML Classification", "04  /  Predict Pitches"
+tab1, tab2, tab3 = st.tabs([
+    "01  /  Extraction & Tracking", "02  /  Comparative Analysis", "03  /  ML Classification"
 ])
 
 @st.cache_resource
 def load_models():
-    return ultralytics.YOLO("yolov8x-pose.pt"), ultralytics.YOLO("NEW_GLOVE_MODEL.pt")
-
-
-def _lr_coefficients_styler(top_features):
-    """Styled pandas Styler for L1 LogReg ranks (signed β, diverging heatmap)."""
-    df = pd.DataFrame(
-        {
-            "#": range(1, len(top_features) + 1),
-            "Feature": [t[0] for t in top_features],
-            "β (L1 coefficient)": [float(t[1]) for t in top_features],
-            "Lean": [
-                "Fastball" if float(t[1]) > 0 else "Offspeed" for t in top_features
-            ],
-        }
-    )
-    coef = df["β (L1 coefficient)"]
-    lim = float(coef.abs().max()) if len(coef) else 1.0
-    if lim < 1e-12:
-        lim = 1.0
-    return (
-        df.style.format({"β (L1 coefficient)": "{:+,.4f}"})
-        .background_gradient(
-            subset=["β (L1 coefficient)"],
-            cmap="RdBu_r",
-            vmin=-lim,
-            vmax=lim,
-        )
-        .set_properties(**{"text-align": "left"}, subset=["Feature", "Lean"])
-        .set_properties(**{"font-family": "'IBM Plex Mono', monospace"}, subset=["#", "β (L1 coefficient)"])
-    )
-
+    return ultralytics.YOLO("POSE_MODEL.pt"), ultralytics.YOLO("NEW_GLOVE_MODEL.pt")
 
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 # TAB 1: EXTRACTION
@@ -468,7 +414,7 @@ with tab1:
         )
         uploaded_file = st.file_uploader(
             f"Upload {pitcher_name} · {pitch_type}",
-            type=["mov", "mp4"],
+            type=["MOV", "mp4"],
             help="Supports .MOV (iPhone/camera) and .mp4 formats."
         )
     with col_right:
@@ -496,13 +442,13 @@ with tab1:
                 "▶  Run Extraction Pipeline", type="primary", use_container_width=True
             )
         if run_pipeline:
-            pitch_root = os.path.join(base_dir, "Pitches")
-            keypoint_root = os.path.join(base_dir, "Keypoints")
+            pitcher_subdir = pitcher_name.lower().replace(' ', '_')
+            pitch_root = os.path.join(base_dir, "Pitches", pitcher_subdir)
+            keypoint_root = os.path.join(base_dir, "Keypoints", pitcher_subdir)
             os.makedirs(pitch_root, exist_ok=True)
             os.makedirs(keypoint_root, exist_ok=True)
             base_filename = os.path.splitext(uploaded_file.name)[0]
-            save_name = f"{pitcher_name.lower()}_{pitch_type.lower().replace(' ', '_')}"
-            save_name = f"{save_name}_{base_filename}"
+            save_name = f"{pitch_type.lower().replace(' ', '_')}_{base_filename}"
             video_target  = os.path.join(pitch_root, f"{save_name}.mov")
             kpt_target = os.path.join(keypoint_root, f"{save_name}.npy")
             with open(video_target, "wb") as f:
@@ -790,16 +736,16 @@ with tab3:
             if eval_mode == "Cross-Session (Train on A, Test on B)":
                 c1, c2 = st.columns(2)
                 with c1:
-                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/Kieran")
+                    train_root_rel = st.text_input("Training Sequences (Session 1)", "Keypoints/kieran2/trimmed_keypoints")
                 with c2:
-                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "Keypoints/Randy")
+                    test_root_rel = st.text_input("Testing Sequences (Session 2)", "keypoints/Randy/trimmed_keypoints")
                 train_root = os.path.join(base_dir, train_root_rel)
                 test_root = os.path.join(base_dir, test_root_rel)
                 
                 raw_seqs_train, n_frames, pf_feature_names = t3.loadFrameDataset(train_root)
                 raw_seqs_test, _, _ = t3.loadFrameDataset(test_root)
             else:
-                data_root_rel = st.text_input("Pitcher Sequence Directory", "Keypoints/Randy")
+                data_root_rel = st.text_input("Pitcher Sequence Directory", "keypoints/Randy/trimmed_keypoints_normalized")
                 data_root = os.path.join(base_dir, data_root_rel)
                 
                 all_seqs, n_frames, pf_feature_names = t3.loadFrameDataset(data_root)
@@ -828,35 +774,17 @@ with tab3:
                         
                     st.markdown("<div class='section-label' style='margin-top:2rem;'> ⭐ Aggregate Feature L1 LogReg (Cross-Session Validation)</div>", unsafe_allow_html=True)
                     agg_results = t3.evaluate_cross_session_aggregate_lr(raw_seqs_train, raw_seqs_test, C=1.0, top_n=10)
-                    lr_m1, lr_m2, lr_m3 = st.columns(3)
-                    with lr_m1:
-                        st.metric("Test accuracy (session 2)", f"{agg_results['accuracy']:.3f}")
-                    with lr_m2:
-                        st.metric("L1 active features", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
-                    with lr_m3:
-                        st.metric("Augmented train size", f"{agg_results['augmented_train_size']}")
-                    lr_coef_col, lr_rep_col = st.columns([1.2, 1])
-                    with lr_coef_col:
-                        st.markdown(
-                            "<div class='lr-table-title'>Top L1 coefficients — hue = direction (fastball vs offspeed), intensity = |β|</div>",
-                            unsafe_allow_html=True,
-                        )
-                        _n_lr = len(agg_results["top_features"])
-                        st.dataframe(
-                            _lr_coefficients_styler(agg_results["top_features"]),
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(460, 48 + _n_lr * 38),
-                        )
-                    with lr_rep_col:
-                        st.markdown("<div style='height:1.35rem;'></div>", unsafe_allow_html=True)
-                        st.markdown(
-                            "<div class='stat-card' style='margin-bottom:0;'>"
-                            "<div class='label'>Classification report</div>"
-                            f"<pre class='model-report-pre'>{html.escape(agg_results['classification_report'])}</pre>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
+                    st.markdown(f"**L1 Sparsity:** {agg_results['n_nonzero_features']}/{agg_results['total_features']} aggregate features selected")
+                    st.markdown(f"**Augmented Training Set:** {agg_results['augmented_train_size']} sequences")
+                    col_acc4, col_rep4 = st.columns([1, 2])
+                    with col_acc4:
+                        st.metric("Test Accuracy (Session 2)", f"{agg_results['accuracy']:.3f}")
+                    with col_rep4:
+                        st.text("Classification Report:\n" + agg_results['classification_report'])
+                    st.markdown("**Top features by L1 coefficient (positive = fastball, negative = offspeed):**")
+                    for feat, coef in agg_results['top_features']:
+                        direction = "→ fastball" if coef > 0 else "→ offspeed"
+                        st.write(f"- `{feat}` ({coef:+.4f}) {direction}")
             else:
                 if len(all_seqs) < 5:
                     st.warning(f"Not enough sequences to split for Single-Pitcher evaluation. Found {len(all_seqs)}.")
@@ -882,42 +810,18 @@ with tab3:
                     if not agg_results:
                         st.error("Error evaluating single session: Not enough samples per class to perform a stratified split.")
                     else:
-                        st.session_state["single_pitcher_clf"] = agg_results["clf"]
-                        st.session_state["single_pitcher_scaler"] = agg_results["scaler"]
-                        st.session_state["single_pitcher_features"] = agg_results["feature_names"]
-                        
-                        sp_m1, sp_m2, sp_m3 = st.columns(3)
-                        with sp_m1:
-                            st.metric("Test accuracy (holdout)", f"{agg_results['accuracy']:.3f}")
-                        with sp_m2:
-                            st.metric("L1 active features", f"{agg_results['n_nonzero_features']} / {agg_results['total_features']}")
-                        with sp_m3:
-                            st.metric("Held-out pitches", f"{agg_results['test_size']}")
-                        st.caption(
-                            f"Training: {agg_results['train_base_size']} real pitches → augmented to {agg_results['augmented_train_size']} samples."
-                        )
-                        sp_lr_tab, sp_lr_rep = st.columns([1.2, 1])
-                        with sp_lr_tab:
-                            st.markdown(
-                                "<div class='lr-table-title'>Top L1 coefficients — hue = direction, intensity = |β|</div>",
-                                unsafe_allow_html=True,
-                            )
-                            _n_splr = len(agg_results["top_features"])
-                            st.dataframe(
-                                _lr_coefficients_styler(agg_results["top_features"]),
-                                hide_index=True,
-                                use_container_width=True,
-                                height=min(460, 48 + _n_splr * 38),
-                            )
-                        with sp_lr_rep:
-                            st.markdown("<div style='height:1.35rem;'></div>", unsafe_allow_html=True)
-                            st.markdown(
-                                "<div class='stat-card' style='margin-bottom:0;'>"
-                                "<div class='label'>Classification report</div>"
-                                f"<pre class='model-report-pre'>{html.escape(agg_results['classification_report'])}</pre>"
-                                "</div>",
-                                unsafe_allow_html=True,
-                            )
+                        st.markdown(f"**L1 Sparsity:** {agg_results['n_nonzero_features']}/{agg_results['total_features']} aggregate features selected")
+                        st.markdown(f"**Training Set:** {agg_results['train_base_size']} real pitches (Augmented to {agg_results['augmented_train_size']} synthetic samples)")
+                        st.markdown(f"**Test Set:** {agg_results['test_size']} pure held-out pitches")
+                        col_acc4, col_rep4 = st.columns([1, 2])
+                        with col_acc4:
+                            st.metric("Test Accuracy (Holdout)", f"{agg_results['accuracy']:.3f}")
+                        with col_rep4:
+                            st.text("Classification Report:\n" + agg_results['classification_report'])
+                        st.markdown("**Top predictive tells for this pitcher (positive = fastball, negative = offspeed):**")
+                        for feat, coef in agg_results['top_features']:
+                            direction = "→ fastball" if coef > 0 else "→ offspeed"
+                            st.write(f"- `{feat}` ({coef:+.4f}) {direction}")
     st.markdown("<div class='section-label' style='margin-top:2rem;'> Pairwise Statistical Significance (Fastball vs. Offspeed) – Aggregate Features</div>", unsafe_allow_html=True)
     seqs = t3.loadSequences(keypoints_root)
     relabel = dict.fromkeys(
@@ -943,123 +847,3 @@ with tab3:
                 hide_index=True, use_container_width=True, height=400
             )
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-# TAB 4: PREDICT PITCHES
-# ──────────────────────────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.markdown(
-        """
-        <div class='info-panel'>
-            <b>Live Inference Engine:</b> Upload a raw <code>.mov</code> or <code>.mp4</code> video of an unlabelled pitch.
-            The pipeline will automatically extract the skeleton, isolate the throwing motion, and predict the pitch class using the model from Tab 03.
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    if "single_pitcher_clf" not in st.session_state or "single_pitcher_scaler" not in st.session_state:
-        st.markdown(
-            f"""
-            <div class='warn-panel'>
-                ⚠ &nbsp; No Single-Pitcher model found in memory. Please go to Tab 03, select Single-Pitcher evaluation, and let the model train first.
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown("<div class='section-label'>Upload Raw Video for Prediction</div>", unsafe_allow_html=True)
-        pred_video = st.file_uploader("Upload an unlabelled pitching video", type=["mov", "mp4"], key="pred_upload")
-        
-        if pred_video is not None:
-            col_pred1, col_pred2 = st.columns([1, 1], gap="large")
-            with col_pred1:
-                st.video(pred_video)
-            
-            with col_pred2:
-                if st.button("▶ Run Full Inference Pipeline", type="primary", use_container_width=True):
-                    pred_vid_target = os.path.join(base_dir, "Pitches", "temp_prediction.mov")
-                    pred_kpt_target = os.path.join(base_dir, "Keypoints", "temp_prediction.npy")
-                    os.makedirs(os.path.dirname(pred_vid_target), exist_ok=True)
-                    
-                    with open(pred_vid_target, "wb") as f:
-                        f.write(pred_video.getbuffer())
-                        
-                    progress_bar = st.progress(0)
-                    status_text  = st.empty()
-                    
-                    with st.spinner("Initializing models & tracking pose..."):
-                        pose_m, glove_m = load_models()
-                        success, meta = t1.processVideo(
-                            pred_vid_target, pred_kpt_target, pose_m, glove_m, progress_bar, status_text
-                        )
-                        
-                    if success:
-                        progress_bar.empty()
-                        status_text.empty()
-                        st.markdown("<div class='success-panel'>✓ Skeleton successfully tracked and windowed. Analyzing kinematics...</div>", unsafe_allow_html=True)
-                        
-                        seq = np.load(pred_kpt_target, allow_pickle=True)
-                        if isinstance(seq, np.ndarray) and seq.dtype == object:
-                            seq = seq.tolist()
-                            
-                        # Extract features
-                        try:
-                            raw_feats = t3.extractFeatures(seq, label="Unknown")
-                            if len(raw_feats) <= 1:
-                                st.error("Extracted sequence was empty or malformed.")
-                            else:
-                                if "single_pitcher_clf" not in st.session_state:
-                                    st.warning("⚠️ No active model found. Please run the model evaluation in **Tab 3** first to initialize the pitch classifier for this pitcher.")
-                                else:
-                                    clf = st.session_state["single_pitcher_clf"]
-                                    scaler = st.session_state["single_pitcher_scaler"]
-                                    feature_names = st.session_state["single_pitcher_features"]
-                                
-                                raw_df = pd.DataFrame([raw_feats])
-                                X_test_raw = raw_df[feature_names].fillna(0).values
-                                X_test_scaled = scaler.transform(X_test_raw)
-                                
-                                pred = clf.predict(X_test_scaled)[0]
-                                probs = clf.predict_proba(X_test_scaled)[0]
-                                
-                                pred_class = "Fastball" if pred == 1 else "Offspeed"
-                                max_prob = max(probs) * 100
-                                
-                                st.markdown(
-                                    f"""
-                                    <div class='stat-card' style='background: #1e3a8a; border-color: #3b82f6;'>
-                                        <div class='label' style='color: #bae6fd;'>AI Pitch Prediction</div>
-                                        <div class='value' style='font-size: 2.2rem;'>{pred_class} <span style='font-size: 1rem; color: #93c5fd; font-weight: normal;'>({max_prob:.1f}% Match)</span></div>
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True
-                                )
-                                
-                                st.markdown("<div class='section-label' style='margin-top:2rem;'>Top Contributing Mechanics</div>", unsafe_allow_html=True)
-                                
-                                contribs = X_test_scaled[0] * clf.coef_[0]
-                                contrib_data = []
-                                for name, scaled_val, coef, contrib in zip(feature_names, X_test_scaled[0], clf.coef_[0], contribs):
-                                    if coef != 0:
-                                        direction = "Pushed toward Fastball" if contrib > 0 else "Pushed toward Offspeed"
-                                        contrib_data.append({
-                                            "Feature": name,
-                                            "Standardized Size": scaled_val,
-                                            "LogReg β Weight": coef,
-                                            "Net Contribution": contrib,
-                                            "Effect": direction
-                                        })
-                                        
-                                if contrib_data:
-                                    contrib_df = pd.DataFrame(contrib_data).sort_values(by="Net Contribution", key=abs, ascending=False).head(8)
-                                    st.dataframe(
-                                        contrib_df.style.format({
-                                            "Standardized Size": "{:+.2f}", 
-                                            "LogReg β Weight": "{:+.4f}", 
-                                            "Net Contribution": "{:+.4f}"
-                                        }).background_gradient(subset=["Net Contribution"], cmap="RdBu_r").set_properties(**{"font-family": "monospace"}, subset=["Feature", "Net Contribution"]),
-                                        hide_index=True,
-                                        use_container_width=True
-                                    )
-                        except Exception as e:
-                            st.error(f"Error analyzing kinematics: {e}")
