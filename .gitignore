@@ -25,6 +25,7 @@ Visualizations/
 .idea/
 .ipynb_checkpoints/
 .vscode/
+*.swp
 
 # POSE MODELS
 pose_model.pt
