@@ -1,75 +1,71 @@
-# SARG Pitch Tipping Project
+# PitchVision
 
-### Overview
-Pitch tipping occurs when a pitcher inadvertently reveals the type of pitch through a consistent change in their windup or release motion. Coaches and analysts spend hours manually reviewing footage to spot these tells. We automate this process by:  
-- Extracting 17‑keypoint skeletons (COCO format) from pitching videos using YOLOv8x‑pose.
-- Detecting the pitcher’s glove (mitt) with a custom YOLOv8 model.
-- Automatically truncating each video to the critical 3‑second window before release.
-- Computing over 100 kinematic features (angles, velocities, symmetries, glove motion).
-- Using Random Forest and L1‑regularised logistic regression to find the most discriminating tells.
-- Generating side‑by‑side DTW‑aligned animations that highlight mechanical differences between pitch types.
+**Automated Detection of Baseball Pitch Tipping via Pose Estimation and Statistical Modeling**
 
-### Pipeline
-1. Pose Estimation (`pose_estimation.py`): Runs YOLOv8x‑pose on each frame, identifies the pitcher, detects glove box, and saves raw keypoints.
-2. Sequence Truncation (`pose_estimation.py`): Finds pitch release frame using wrist‑shoulder horizontal motion, then keeps the last 180 frames (~3 sec at 60 fps).
-3. Feature Extraction (`pitch_classification.py`): Extracts 100+ kinematic features: joint angles, angular velocities, linear speeds, symmetry ratios, glove trajectories, etc.
-4. Statistical Testing (`pitch_classification.py`): Mann‑Whitney U tests (Bonferroni corrected) to find features that differ significantly between pitch types.
-5. Machine Learning (`pitch_classification.py`): Trains Random Forest and L1‑logistic regression to classify fastball vs. off‑speed; reports feature importances.
-6. Visualization (`pose_visualization.py`): Aligns two pitch sequences via DTW, spatially registers them using RANSAC, and renders a superimposed video.
-7. Dashboard (IN PROGRESS) (`dashboard/`): Streamlit app for uploading videos, running extraction, comparing pitches, and viewing ML results.
-8. Decision Tree (IN PROGRESS) (`experimental/`): Per‑frame feature extraction (15 per frame) and interpretable decision tree for fastball/other classification.
+PitchVision is a Streamlit dashboard that processes baseball pitch videos, extracting biomechanical motion data using pose estimation and object tracking, before applying statistical and machine learning methods to identify subtle differences (tips) between fastballs and off‑speed pitches, then offering interactive superimposed visualizations for qualitative verification.
 
-### Setup
-1. Clone Repostory:
- ```
-git clone https://github.com/awang124/pitch-tipping
-cd pitch-tipping
-```
-2. Create Virtual Environment: 
-```
+---
+
+## Overview
+
+The repository contains the following core Python files:
+
+### `pitchvision.py`  
+Main Streamlit application with four tabs:
+- **Tab 01: Motion Estimation**: Upload an `.mov`/`.mp4` pitch video to compute a pitcher's skeletal pose and glove bounding box (here in called keypoints) sequences (YOLOv8x‑Pose + custom glove YOLO + pitch windup truncation).
+- **Tab 02: Comparative Analysis**: Select two keypoint sequences to generate a spatially and temporally aligned (DTW + RANSAC) superimposed visualization, with optional kinematic feature highlighting.
+- **Tab 03: Pitch Classification**: Computes feature representations of keypoint sequences, then uses Mann-Whitney U-Testing, logistic regression, and decision trees to identify those features most discriminative in determining fastballs vs off-speeds.
+- **Tab 04: Pitch Prediction**: Uses these trained models to predict classes for newly uploaded pitch videos.
+
+## Setup
+
+### Prerequisites
+- Python ≥ 3.10
+- [FFmpeg](https://ffmpeg.org/) (for video transcoding in Tab 02 only, which uses libx264 coding)
+
+### Dependencies
+Create a virtual environment and install required packages:
+
+```bash
 python -m venv venv
-source venv/bin/activate
-```
-3. Install Dependencies: 
-```
+source venv/bin/activate      # Linux/macOS
+venv\Scripts\activate         # Windows
+
 pip install -r requirements.txt
 ```
-4. Get your Pitch Videos
+
+### Model Weights
+- `yolov8x-pose.pt`: will automatically be downloaded by Ultralytics during execution.
+- `GLOVE_MODEL.pt`: our custom glove detection YOLO model.
 
 ### Usage
-1. Pose Estimation & Truncation
-
-Standalone:
- ```
-python Pose-Estimation.py
-```
-Modify paths at the bottom of script to point to your video folder and output directory.
-
-Inside Dashboard (Recommended):
- ```
-streamlit run dashboard.py
-```
-Go to video upload tab, fill in pitcher name and pitch type, and click "Run Extraction Pipeline". The processed .npy file will be saved in Keypoints/.
-
-2. Feature Extration & Classification
-
-Standalone (from Keypoints directory): 
-```
-python pitch_classification.py
+Simply run:
+```bash
+streamlit run pitchvision.py
 ```
 
-Inside Dashboard (Recommended):  
-Go to ML modeling tab, dashboard will call `dashboard_classifier.py`, and display top features & model results.
+---
 
-3. Visualization
+## Organization
 
-Standalone: 
+Directory structure after usage:
+
 ```
-python pitch_visualization.py
+├── Pitches/
+│   ├── Pitcher1/
+│   │   ├── fastball1.mov
+│   │   └── ...
+│   └── Pitcher2/
+│   │   ├── fastball1.mov
+│   │   └── ...
+├── Keypoints/
+│   ├── Pitcher1/
+│   │   ├── fastball1.npy
+│   │   └── ...
+│   └── Pitcher2/
+│   │   ├── fastball1.npy
+│   │   └── ...
+├── Visualizations/       # Generated Superimpositions
+└── (*.py, *.pt, etc.)
 ```
-
-Inside Dashboard (Recommended):  
-Go to visualization tab. Choose a feature group (e.g., “Right Elbow”) and click “Auto‑Select Extremal Matchup” – dashboard will automatically pick fastball and off‑speed pitch showing largest difference in that feature. 
-
-It then creates a DTW‑aligned, RANSAC‑registered overlay video, showing reference skeleton in white and compared skeleton in blue, with option to highlight specific joints.
 
