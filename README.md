@@ -38,7 +38,7 @@ pip install -r requirements.txt
 ### Usage
 Simply run:
 ```bash
-streamlit run pitchvision.py
+streamlit run app.py
 ```
 
 ---
