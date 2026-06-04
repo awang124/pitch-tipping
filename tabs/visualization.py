@@ -134,8 +134,8 @@ def render_visualization_tab(base_dir):
         ### GET SELECTED KEYPOINT SEQUENCES
         out_dir = os.path.join(base_dir, "Visualizations")
         os.makedirs(out_dir, exist_ok=True)
-        base_name = os.path.splitext(base_pitch)[0].replace("/", "_")
-        comp_name = os.path.splitext(compare_pitch)[0].replace("/", "_")
+        base_name = os.path.splitext(base_pitch)[0].replace("/", "_").replace("\\", "_")
+        comp_name = os.path.splitext(compare_pitch)[0].replace("/", "_").replace("\\", "_")
         out_video = os.path.join(out_dir, f"{base_name}_vs_{comp_name}.mp4")
 
         with st.spinner("Running DTW and RANSAC:"):
