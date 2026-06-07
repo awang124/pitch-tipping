@@ -6,6 +6,7 @@ from tabs.estimation import render_estimation_tab
 from tabs.visualization import render_visualization_tab
 from tabs.classification import render_classification_tab
 from tabs.prediction import render_prediction_tab
+from tabs.overlay import render_overlay_tab
 
 ### TAB NAME
 st.set_page_config(
@@ -33,11 +34,12 @@ st.markdown(
 )
 
 ### CREATE FOUR TABS
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1: Motion Estimation",
     "2: Comparative Visualization",
     "3: Pitch Classification",
     "4: Pitch Prediction",
+    "5: Skeleton Overlay",
 ])
 
 with tab1:
@@ -52,3 +54,5 @@ with tab3:
 with tab4:
     render_prediction_tab(base_dir)
 
+with tab5:
+    render_overlay_tab(base_dir)
