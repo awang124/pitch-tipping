@@ -1,9 +1,20 @@
 import os
+import shutil
 import subprocess
 import streamlit as st
 import processing.tab2_helper as t2
 
 from ui.components import info_panel, warn_panel, success_panel, section_label, metric_card
+
+
+def _find_ffmpeg():
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        return ffmpeg
+    for path in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if os.path.isfile(path):
+            return path
+    return None
 
 def render_visualization_tab(base_dir):
     """
@@ -145,19 +156,38 @@ def render_visualization_tab(base_dir):
                 else ""
             )
             ### GENERATE SUPERIMPOSITION
-            t2.visualizeDifferences(
+            result = t2.visualizeDifferences(
                 os.path.join(keypoint_root, base_pitch),
                 os.path.join(keypoint_root, compare_pitch),
                 out_video,
                 highlight=highlight,
+                base_dir=base_dir,
             )
+            if result.get("crop_fallback"):
+                st.markdown(
+                    warn_panel(
+                        "Used a wider fallback crop because pose anchors or coverage"
+                        " were unreliable for this pair."
+                    ),
+                    unsafe_allow_html=True,
+                )
             ### TRANSCODE OUTPUT FOR WEB BROWSER VIEWING
             web_video = os.path.join(out_dir, f"web_{base_name}_vs_{comp_name}.mp4")
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", out_video, "-vcodec", "libx264", web_video],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            ffmpeg = _find_ffmpeg()
+            if ffmpeg:
+                subprocess.run(
+                    [ffmpeg, "-y", "-i", out_video, "-vcodec", "libx264", web_video],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                st.markdown(
+                    warn_panel(
+                        "FFmpeg not found — video saved but may not play in the browser. "
+                        "Install with <code>brew install ffmpeg</code>, then restart the app."
+                    ),
+                    unsafe_allow_html=True,
+                )
 
         st.markdown(
             success_panel(f"✓ &nbsp; Superimposition created, saved to <code>{out_video}</code>"),

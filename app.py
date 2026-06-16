@@ -2,6 +2,7 @@ import streamlit as st
 import ui.style as style
 import ui.sidebar as sidebar
 
+from tabs.compare import render_compare_tab
 from tabs.estimation import render_estimation_tab
 from tabs.visualization import render_visualization_tab
 from tabs.classification import render_classification_tab
@@ -33,14 +34,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-### CREATE FOUR TABS
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+### CREATE TABS
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Pitch Compare",
     "1: Motion Estimation",
     "2: Comparative Visualization",
     "3: Pitch Classification",
     "4: Pitch Prediction",
     "5: Skeleton Overlay",
 ])
+
+with tab0:
+    render_compare_tab(base_dir)
 
 with tab1:
     render_estimation_tab(base_dir)

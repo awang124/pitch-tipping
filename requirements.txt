@@ -3,9 +3,7 @@ scipy
 pandas
 scikit-learn>=1.8.0
 opencv-python
-torch
-torchvision
-ultralytics
+mediapipe
 streamlit
 fastdtw
 

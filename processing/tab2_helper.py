@@ -4,6 +4,16 @@ import numpy as np
 from fastdtw import fastdtw
 from scipy.spatial.distance import euclidean
 
+from processing.kpt_utils import (
+    DELIVERY_POST_FRAMES,
+    DELIVERY_PRE_FRAMES,
+    MIN_DELIVERY_FRAMES,
+    findDeliverySyncFrame,
+    isValidKpt,
+    loadKeypointMeta,
+    videoPathFromKeypoints,
+)
+
 SKELETON_EDGES = [
     (5, 7), (7, 9),     # LEFT ARM
     (6, 8), (8, 10),    # RIGHT ARM
@@ -91,22 +101,88 @@ def findBestPitchPair(kpts_root, feature_grp):
     best_os = os.path.relpath(max(os_scores, key=lambda x: x[1])[0], kpts_root)
     return best_fb, best_os
 
-def isValidKpt(kpt):
+
+def _loadPitchSequenceArrays(kpts_path):
+    """Load keypoints, glove boxes, and per-frame video indices from a .npy file."""
+    kpts_path = os.path.abspath(kpts_path)
+    raw = np.load(kpts_path, allow_pickle=True)
+    if isinstance(raw, np.ndarray) and raw.dtype == object:
+        raw = raw.tolist()
+    if not raw:
+        return None, None, None
+
+    if isinstance(raw[0], dict):
+        glove = np.array(
+            [frame.get("glove_box", [-1] * 4) for frame in raw], dtype=np.float32
+        )
+        kpts = np.array([frame["keypoints"] for frame in raw], dtype=np.float32)
+        video_frames = np.array(
+            [int(frame.get("video_frame", -1)) for frame in raw], dtype=np.int32
+        )
+    else:
+        glove = np.full((len(raw), 4), -1.0, dtype=np.float32)
+        kpts = np.array(raw, dtype=np.float32)
+        video_frames = np.full(len(raw), -1, dtype=np.int32)
+
+    valid_idx = [i for i, frame in enumerate(kpts) if np.max(frame) > 0]
+    if valid_idx:
+        kpts = kpts[valid_idx]
+        glove = glove[valid_idx]
+        video_frames = video_frames[valid_idx]
+    return kpts, glove, video_frames
+
+
+def _trimDeliveryWithVideoFrames(kpts, glove, video_frames):
+    """Mirror trimToDeliveryWindow while keeping video_frame tags aligned."""
+    if len(kpts) == 0:
+        return kpts, glove, video_frames
+    end = findDeliverySyncFrame(kpts)
+    start = max(0, end - DELIVERY_PRE_FRAMES)
+    stop = min(len(kpts), end + DELIVERY_POST_FRAMES)
+    if stop - start < MIN_DELIVERY_FRAMES:
+        return kpts, glove, video_frames
+    return kpts[start:stop], glove[start:stop], video_frames[start:stop]
+
+
+def loadAndAlignPitchPair(kpts1_path, kpts2_path, trim_delivery=True):
     """
-    Check if a keypoint coordinate is valid (not NaN, not zero vector).
+    Load two pitch sequences and compute a DTW alignment path (Tab 2 logic).
 
     Parameters
     ----------
-    kpt: (x, y) tuple.
+    kpts1_path, kpts2_path: Paths to .npy keypoint files.
+    trim_delivery: If True, trim to delivery window before DTW (Tab 2 default).
+                   If False, use the full extracted sequence for whole-pitch compare.
 
     Returns
     -------
-    True if valid.
+    dict with keys kpts1, glove1, video_frames1, kpts2, glove2, video_frames2, path.
     """
-    x, y = kpt
-    return not (np.isnan(x) or np.isnan(y) or (x == 0 and y == 0))
+    kpts1, glove1, vf1 = _loadPitchSequenceArrays(kpts1_path)
+    kpts2, glove2, vf2 = _loadPitchSequenceArrays(kpts2_path)
+    if kpts1 is None or kpts2 is None or len(kpts1) == 0 or len(kpts2) == 0:
+        raise ValueError("One or both keypoint files are empty.")
 
-def filterValidPoints(kpts, indices):
+    if trim_delivery:
+        kpts1, glove1, vf1 = _trimDeliveryWithVideoFrames(kpts1, glove1, vf1)
+        kpts2, glove2, vf2 = _trimDeliveryWithVideoFrames(kpts2, glove2, vf2)
+
+    feat1 = extractDTWFeatures(kpts1)
+    feat2 = extractDTWFeatures(kpts2)
+    _, path = fastdtw(feat1, feat2, dist=euclidean)
+
+    return {
+        "kpts1": kpts1,
+        "glove1": glove1,
+        "video_frames1": vf1,
+        "kpts2": kpts2,
+        "glove2": glove2,
+        "video_frames2": vf2,
+        "path": path,
+    }
+
+
+def filterValidPoints(kpts, indices, frame_width=None, frame_height=None):
     """
     Extract valid keypoints for given indices.
 
@@ -123,7 +199,7 @@ def filterValidPoints(kpts, indices):
     valid_indices = []
     for i in indices:
         x, y = kpts[i]
-        if isValidKpt((x, y)):
+        if isValidKpt((x, y), frame_width, frame_height):
             pts.append([x, y])
             valid_indices.append(i)
     return np.array(pts, dtype=np.float32).reshape(-1, 2), valid_indices
@@ -242,8 +318,255 @@ def getTorsoLength(kpts):
             lengths.append(np.linalg.norm(s_mid - h_mid))
     return np.median(lengths) if lengths else 1.0
 
+MIN_TORSO_PX = 50
+CROP_HALF_W = 2.2
+CROP_HALF_H = 2.8
+CROP_FALLBACK_HALF_W = 3.0
+CROP_FALLBACK_HALF_H = 3.5
+MIN_CROP_W = 200
+MIN_CROP_H = 300
+CROP_COVERAGE_THRESHOLD = 0.80
+PERCENTILE_LO = 5
+PERCENTILE_HI = 95
+TORSO_OUTLIER_RATIO = 2.5
+
+def trimToDeliveryWindow(kpts, glove, pre=DELIVERY_PRE_FRAMES, post=DELIVERY_POST_FRAMES):
+    """
+    Trim a sequence to a fixed window ending near release.
+    Both sequences trimmed this way place the delivery sync frame at the same
+    relative index, which stabilizes DTW when clips start at different phases.
+    """
+    if len(kpts) == 0:
+        return kpts, glove
+    end = findDeliverySyncFrame(kpts)
+    start = max(0, end - pre)
+    stop = min(len(kpts), end + post)
+    target_len = pre + post
+    if stop - start < MIN_DELIVERY_FRAMES:
+        return kpts, glove
+    return kpts[start:stop], glove[start:stop]
+
+def getPairTorsoLengths(kpts1, kpts2):
+    """
+    Torso lengths for spatial alignment and crop sizing.
+    When one estimate is an outlier vs the other, use the larger value for
+    both so scale/crop are not driven by a bad detection on one clip.
+    """
+    len1 = getTorsoLength(kpts1)
+    len2 = getTorsoLength(kpts2)
+    if len1 > 0 and len2 > 0:
+        ratio = max(len1, len2) / min(len1, len2)
+        if ratio > TORSO_OUTLIER_RATIO:
+            robust = max(len1, len2)
+            return robust, robust
+    return len1, len2
+
+def _videoPathFromKeypoints(kpts_path, base_dir):
+    """Map Keypoints/.../foo.npy to Pitches/.../foo.mov or .mp4."""
+    return videoPathFromKeypoints(kpts_path, base_dir)
+
+def _inferFrameSizeFromKeypoints(kpts1, kpts2):
+    """Infer landscape vs portrait canvas from keypoint coordinate spans."""
+    pts = []
+    for kpts in (kpts1, kpts2):
+        for frame in kpts:
+            for k in range(len(frame)):
+                if isValidKpt(frame[k]):
+                    pts.append(frame[k])
+    if not pts:
+        return 1080, 1920
+    pts = np.array(pts, dtype=np.float32)
+    x_hi = float(np.percentile(pts[:, 0], 98))
+    y_hi = float(np.percentile(pts[:, 1], 98))
+    margin = 1.12
+    if x_hi > y_hi * 1.25:
+        width = max(1920, int(x_hi * margin))
+        height = max(1080, int(y_hi * margin))
+    else:
+        width = max(1080, int(x_hi * margin))
+        height = max(1920, int(y_hi * margin))
+    return width, height
+
+def resolveFrameSize(kpts_path, base_dir=None, kpts1=None, kpts2=None):
+    """
+    Resolve source video frame dimensions for a keypoint file.
+    Prefers sidecar metadata, then paired Pitches/ video, then keypoint bounds.
+    """
+    meta = loadKeypointMeta(kpts_path)
+    if meta.get("frame_width") and meta.get("frame_height"):
+        return int(meta["frame_width"]), int(meta["frame_height"])
+
+    video_path = _videoPathFromKeypoints(kpts_path, base_dir)
+    if video_path:
+        cap = cv2.VideoCapture(video_path)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if width > 0 and height > 0:
+            return width, height
+
+    if kpts1 is not None and kpts2 is not None and len(kpts1) and len(kpts2):
+        return _inferFrameSizeFromKeypoints(kpts1, kpts2)
+    return 1080, 1920
+
+def _hasValidAnchorCenter(anchors1):
+    """True if at least one non-zero anchor exists."""
+    return np.any(np.linalg.norm(anchors1, axis=1) > 1e-3)
+
+def _fallbackCenter(kpts1):
+    """Body center from valid keypoints when anchors are unavailable."""
+    pts = []
+    for frame in kpts1:
+        pts.extend(_collectFramePoints(frame))
+    if pts:
+        return np.median(np.array(pts, dtype=np.float32), axis=0)
+    return np.array([540.0, 960.0], dtype=np.float32)
+
+def _expandBoxSymmetric(center, x1, y1, x2, y2, pts):
+    """Expand crop around fixed center to include all given points."""
+    cx, cy = float(center[0]), float(center[1])
+    half_w = max(cx - x1, x2 - cx)
+    half_h = max(cy - y1, y2 - cy)
+    for pt in pts:
+        x, y = float(pt[0]), float(pt[1])
+        half_w = max(half_w, abs(x - cx))
+        half_h = max(half_h, abs(y - cy))
+    return cx - half_w, cy - half_h, cx + half_w, cy + half_h
+
+def _coverageInCrop(kpts1, x1, y1, x2, y2):
+    """Fraction of valid sequence-1 keypoints that fall inside the crop."""
+    total, inside = 0, 0
+    for frame in kpts1:
+        for k in range(17):
+            if isValidKpt(frame[k]):
+                total += 1
+                x, y = frame[k]
+                if x1 <= x <= x2 and y1 <= y <= y2:
+                    inside += 1
+    return inside / total if total > 0 else 0.0
+
+def _collectAlignedMotionPoints(
+    kpts1, kpts2, glove1, glove2, anchors1, anchors2, global_scale, path, is_normalized,
+):
+    """Collect aligned skeleton/glove points across the DTW path."""
+    all_pts = []
+    for i, j in path:
+        all_pts.extend(_collectFramePoints(kpts1[i], glove1[i]))
+        kpts2_aligned = _alignKptsToBase(
+            kpts2[j], anchors1[i], anchors2[j], global_scale, is_normalized
+        )
+        g2_aligned = _alignGloveToBase(
+            glove2[j], anchors1[i], anchors2[j], global_scale, is_normalized
+        )
+        all_pts.extend(_collectFramePoints(kpts2_aligned, g2_aligned))
+    return all_pts
+
+def _torsoCropBox(center, torso, half_w_mult, half_h_mult):
+    """Build anchor-centered crop from torso multiples."""
+    half_w = half_w_mult * torso
+    half_h = half_h_mult * torso
+    return (
+        center[0] - half_w, center[1] - half_h,
+        center[0] + half_w, center[1] + half_h,
+    )
+
+def _clampCropRect(x1, y1, x2, y2, frame_width, frame_height, torso):
+    """Clamp crop to frame bounds and enforce minimum size."""
+    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+    x1 = max(0, x1)
+    y1 = max(0, y1)
+    x2 = min(frame_width, x2)
+    y2 = min(frame_height, y2)
+    if x2 - x1 < MIN_CROP_W:
+        cx = (x1 + x2) / 2
+        x1 = max(0, int(cx - MIN_CROP_W / 2))
+        x2 = min(frame_width, x1 + MIN_CROP_W)
+    if y2 - y1 < MIN_CROP_H:
+        cy = (y1 + y2) / 2
+        y1 = max(0, int(cy - MIN_CROP_H / 2))
+        y2 = min(frame_height, y1 + MIN_CROP_H)
+    if x2 <= x1:
+        x2 = min(frame_width, x1 + max(int(torso * CROP_HALF_W * 2), MIN_CROP_W))
+    if y2 <= y1:
+        y2 = min(frame_height, y1 + max(int(torso * CROP_HALF_H * 2), MIN_CROP_H))
+    return x1, y1, x2, y2
+
+def _collectFramePoints(kpts, glove=None):
+    """Collect valid skeleton and glove coordinates from a single frame."""
+    pts = [kpts[k] for k in range(len(kpts)) if isValidKpt(kpts[k])]
+    if glove is not None and glove[0] != -1:
+        x1, y1, x2, y2 = glove
+        pts.extend([[x1, y1], [x2, y2]])
+    return pts
+
+def _alignKptsToBase(kpts2, anchor1, anchor2, global_scale, is_normalized):
+    """Spatially align sequence-2 keypoints to sequence-1 anchor for one frame."""
+    kpts2_aligned = np.copy(kpts2)
+    if not is_normalized:
+        for k in range(len(kpts2_aligned)):
+            if isValidKpt(kpts2_aligned[k]):
+                kpts2_aligned[k] = (kpts2_aligned[k] - anchor2) * global_scale + anchor1
+    return kpts2_aligned
+
+def _alignGloveToBase(glove, anchor1, anchor2, global_scale, is_normalized):
+    """Spatially align a glove box to sequence-1 coordinates."""
+    if glove[0] == -1 or is_normalized:
+        return None
+    shift_vec = anchor1 - anchor2 * global_scale
+    x1, y1, x2, y2 = glove
+    nx1, ny1 = np.array([x1, y1]) * global_scale + shift_vec
+    nx2, ny2 = np.array([x2, y2]) * global_scale + shift_vec
+    return [nx1, ny1, nx2, ny2]
+
+def computePitcherCropRect(
+    kpts1, kpts2, glove1, glove2, anchors1, anchors2,
+    global_scale, path, frame_width, frame_height, is_normalized,
+):
+    """
+    Compute a fixed anchor-centered crop rectangle for the pitcher region.
+    Uses torso-scaled dimensions with percentile motion-envelope expansion
+    and validation with a wider fallback box when needed.
+    """
+    center = (
+        np.median(anchors1, axis=0)
+        if _hasValidAnchorCenter(anchors1)
+        else _fallbackCenter(kpts1)
+    )
+    torso = max(getTorsoLength(kpts1), getTorsoLength(kpts2), MIN_TORSO_PX)
+
+    def build_crop(half_w_mult, half_h_mult):
+        x1, y1, x2, y2 = _torsoCropBox(center, torso, half_w_mult, half_h_mult)
+        motion_pts = _collectAlignedMotionPoints(
+            kpts1, kpts2, glove1, glove2, anchors1, anchors2,
+            global_scale, path, is_normalized,
+        )
+        if motion_pts:
+            pts = np.array(motion_pts, dtype=np.float32)
+            lo = np.percentile(pts, PERCENTILE_LO, axis=0)
+            hi = np.percentile(pts, PERCENTILE_HI, axis=0)
+            envelope = np.array([
+                lo, hi, [lo[0], hi[1]], [hi[0], lo[1]],
+            ], dtype=np.float32)
+            x1, y1, x2, y2 = _expandBoxSymmetric(center, x1, y1, x2, y2, envelope)
+        return _clampCropRect(x1, y1, x2, y2, frame_width, frame_height, torso)
+
+    x1, y1, x2, y2 = build_crop(CROP_HALF_W, CROP_HALF_H)
+    coverage = _coverageInCrop(kpts1, x1, y1, x2, y2)
+    crop_w, crop_h = x2 - x1, y2 - y1
+    used_fallback = (
+        coverage < CROP_COVERAGE_THRESHOLD
+        or crop_w < MIN_CROP_W
+        or crop_h < MIN_CROP_H
+        or not _hasValidAnchorCenter(anchors1)
+    )
+    if used_fallback:
+        x1, y1, x2, y2 = build_crop(CROP_FALLBACK_HALF_W, CROP_FALLBACK_HALF_H)
+
+    return x1, y1, x2, y2, used_fallback
+
 def visualizeDifferences(
-    kpts1_path, kpts2_path, output_path, video_bg=None, threshold=15.0, highlight=""
+    kpts1_path, kpts2_path, output_path, video_bg=None, threshold=15.0,
+    highlight="", base_dir=None,
 ):
     """
     Create a RANSAC‑aligned superimposition video of two pitch deliveries.
@@ -261,6 +584,11 @@ def visualizeDifferences(
     video_bg: Optional path to background video.
     threshold: Not used in current implementation.
     highlight: String name of feature to highlight (e.g., 'glove', 'right_elbow').
+    base_dir: Root directory for Pitches/ and Keypoints/ (used to resolve frame size).
+
+    Returns
+    -------
+    dict with key ``crop_fallback`` (bool) if a wider fallback crop was used.
     """
     kpts1 = np.load(kpts1_path, allow_pickle=True)
     kpts2 = np.load(kpts2_path, allow_pickle=True)
@@ -297,6 +625,10 @@ def visualizeDifferences(
     if len(valid_idx2) > 0:
         kpts2 = np.array(kpts2)[valid_idx2]
         glove2 = glove2[valid_idx2]
+
+    ### TRIM TO DELIVERY WINDOW (phase-normalize before DTW)
+    kpts1, glove1 = trimToDeliveryWindow(kpts1, glove1)
+    kpts2, glove2 = trimToDeliveryWindow(kpts2, glove2)
     
     ### DETERMINE NORMALIZATION
     width, height, fps, frames_bg = 1080, 1920, 30, []
@@ -350,18 +682,34 @@ def visualizeDifferences(
                 break
             frames_bg.append(frame)
         cap.release()
-    out = cv2.VideoWriter(
-        output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-    )
+    elif is_normalized:
+        pass
+    else:
+        width, height = resolveFrameSize(
+            kpts1_path, base_dir=base_dir, kpts1=kpts1, kpts2=kpts2
+        )
+        w2, h2 = resolveFrameSize(kpts2_path, base_dir=base_dir, kpts1=kpts1, kpts2=kpts2)
+        width = max(width, w2)
+        height = max(height, h2)
     
     ### ALIGNMENT REFERENCES
     anchors1 = getInterpolatedAnchors(kpts1)
     anchors2 = getInterpolatedAnchors(kpts2)
     
     ### GLOBAL SCALE FACTOR
-    len1 = getTorsoLength(kpts1)
-    len2 = getTorsoLength(kpts2)
+    len1, len2 = getPairTorsoLengths(kpts1, kpts2)
     global_scale = len1 / len2 if len2 > 0 else 1.0
+
+    ### FIXED PITCHER CROP (anchor-centered, computed once)
+    crop_x1, crop_y1, crop_x2, crop_y2, crop_fallback = computePitcherCropRect(
+        kpts1, kpts2, glove1, glove2, anchors1, anchors2,
+        global_scale, path, width, height, is_normalized,
+    )
+    crop_w = crop_x2 - crop_x1
+    crop_h = crop_y2 - crop_y1
+    out = cv2.VideoWriter(
+        output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (crop_w, crop_h)
+    )
     
     ### RENDER ALIGNED FRAMES
     max_overall_dist = 0
@@ -374,16 +722,9 @@ def visualizeDifferences(
         
         anchor1 = anchors1[i]
         anchor2 = anchors2[j]
-        kpts2_aligned = np.copy(kpts2[j])
-        shift_vec = None
-        
-        ### ALIGN SEQUENCE 2 TO SEQUENCE 1 ANCHOR
-        if not is_normalized:
-            for k in range(len(kpts2_aligned)):
-                if isValidKpt(kpts2_aligned[k]):
-                    kpts2_aligned[k] = (kpts2_aligned[k] - anchor2) * global_scale + anchor1
-            
-            shift_vec = anchor1 - anchor2 * global_scale
+        kpts2_aligned = _alignKptsToBase(
+            kpts2[j], anchor1, anchor2, global_scale, is_normalized
+        )
     
         ### RECORD DEVIATIONS
         max_dist_in_frame = 0
@@ -416,12 +757,9 @@ def visualizeDifferences(
     
         ### DRAW ALIGNED GLOVE BOXES
         g2 = glove2[j]
-        g2_aligned = None
-        if shift_vec is not None and g2[0] != -1:
-            x1, y1, x2, y2 = g2
-            nx1, ny1 = np.array([x1, y1]) * global_scale + shift_vec
-            nx2, ny2 = np.array([x2, y2]) * global_scale + shift_vec
-            g2_aligned = [nx1, ny1, nx2, ny2]
+        g2_aligned = _alignGloveToBase(
+            g2, anchor1, anchor2, global_scale, is_normalized
+        )
         g1 = glove1[i]
         if g1[0] != -1:
             cv2.rectangle(
@@ -453,20 +791,22 @@ def visualizeDifferences(
             if isValidKpt(p1) and isValidKpt(p2):
                 cv2.line(canvas, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 0, 255), 3)
     
-        ### ADD TEXT OVERLAYS
+        ### ADD TEXT OVERLAYS AND CROP TO PITCHER REGION
+        canvas = canvas[crop_y1:crop_y2, crop_x1:crop_x2]
         cv2.putText(
-            canvas, f"Pitch 1 (Base): White", (40, height - 100),
-            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2
+            canvas, f"Pitch 1 (Base): White", (20, crop_h - 70),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2
         )
         cv2.putText(
-            canvas, f"Pitch 2 (Aligned): Blue", (40, height - 60),
-            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 100, 50), 2
+            canvas, f"Pitch 2 (Aligned): Blue", (20, crop_h - 35),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 100, 50), 2
         )
         if highlight:
             cv2.putText(
-                canvas, f"FLAG TARGET: {highlight.upper()}", (40, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3
+                canvas, f"FLAG TARGET: {highlight.upper()}", (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2
             )
         out.write(canvas)
     out.release()
+    return {"crop_fallback": crop_fallback}
 

@@ -4,6 +4,7 @@ import tempfile
 import streamlit as st
 import processing.tab5_helper as t5
 
+from processing.kpt_utils import videoPathFromKeypoints
 from ui.components import info_panel, warn_panel, success_panel, section_label, metric_card
 
 def render_overlay_tab(base_dir):
@@ -25,7 +26,8 @@ def render_overlay_tab(base_dir):
         info_panel(
             "Upload the original source video for a pitch, then select its"
             " corresponding keypoint sequence. <br>"
-            "The extracted skeleton will be rendered directly onto the real footage. <br>"
+            "The full pitch video is rendered with the skeleton overlaid from"
+            " windup through release. <br>"
             "Optionally highlight a kinematic feature to inspect it in context."
         ),
         unsafe_allow_html=True,
@@ -59,21 +61,10 @@ def render_overlay_tab(base_dir):
         )
         return
 
+    pitch_root = os.path.join(base_dir, "Pitches")
+
     ### INPUT COLUMNS
     left_col, right_col = st.columns([1, 1], gap="large")
-
-    with left_col:
-        st.markdown(section_label("Source Video"), unsafe_allow_html=True)
-        uploaded_video = st.file_uploader(
-            "Upload Original Pitch Video",
-            type=["mp4", "mov"],
-            help="Upload the original .mp4 or .mov video this keypoint file was extracted from.",
-            key="tab5_video_upload",
-        )
-
-        ### PREVIEW UPLOADED VIDEO
-        if uploaded_video:
-            st.video(uploaded_video)
 
     with right_col:
         st.markdown(section_label("Keypoint Sequence"), unsafe_allow_html=True)
@@ -84,6 +75,30 @@ def render_overlay_tab(base_dir):
             key="tab5_npy_select",
         )
 
+    paired_video = videoPathFromKeypoints(
+        os.path.join(keypoint_root, selected_npy), base_dir
+    )
+
+    with left_col:
+        st.markdown(section_label("Source Video"), unsafe_allow_html=True)
+        if paired_video and os.path.isfile(paired_video):
+            st.markdown(
+                info_panel(
+                    f"Auto-matched video: <code>{os.path.relpath(paired_video, base_dir)}</code>"
+                ),
+                unsafe_allow_html=True,
+            )
+            st.video(paired_video)
+        uploaded_video = st.file_uploader(
+            "Upload Original Pitch Video (optional override)",
+            type=["mp4", "mov"],
+            help="Leave empty to use the auto-matched Pitches/ video.",
+            key="tab5_video_upload",
+        )
+        if uploaded_video:
+            st.video(uploaded_video)
+
+    with right_col:
         ### FEATURE HIGHLIGHT SELECTOR
         st.markdown("<div style='margin-top: 1.2rem;'></div>", unsafe_allow_html=True)
         st.markdown(section_label("Feature Highlight"), unsafe_allow_html=True)
@@ -124,9 +139,25 @@ def render_overlay_tab(base_dir):
         )
 
     if generate:
-        if not uploaded_video:
+        video_path = None
+        video_label = ""
+        tmp_video_path = None
+
+        if uploaded_video:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                tmp.write(uploaded_video.getbuffer())
+                tmp_video_path = tmp.name
+            video_path = tmp_video_path
+            video_label = uploaded_video.name
+        elif paired_video and os.path.isfile(paired_video):
+            video_path = paired_video
+            video_label = os.path.relpath(paired_video, base_dir)
+        else:
             st.markdown(
-                warn_panel("Please upload a source video before generating."),
+                warn_panel(
+                    "No source video found. Upload a video or ensure a matching"
+                    f" file exists under <code>{pitch_root}</code>."
+                ),
                 unsafe_allow_html=True,
             )
             return
@@ -139,12 +170,6 @@ def render_overlay_tab(base_dir):
         out_video = os.path.join(out_dir, f"overlay_{npy_stem}.mp4")
         web_video = os.path.join(out_dir, f"web_overlay_{npy_stem}.mp4")
 
-        ### SAVE UPLOADED VIDEO TO TEMP FILE
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp.write(uploaded_video.getbuffer())
-            tmp_video_path = tmp.name
-
-        ### RESOLVE HIGHLIGHT STRING
         highlight = (
             highlight_target.lower().replace(" ", "_")
             if highlight_target != "None"
@@ -155,17 +180,18 @@ def render_overlay_tab(base_dir):
         with st.spinner("Overlaying skeleton onto video:"):
             success, message = t5.overlaySkeletonOnVideo(
                 kpts_path=os.path.join(keypoint_root, selected_npy),
-                video_path=tmp_video_path,
+                video_path=video_path,
                 output_path=out_video,
                 highlight=highlight,
                 skeleton_opacity=skeleton_opacity,
             )
 
         ### CLEAN UP TEMP FILE
-        try:
-            os.unlink(tmp_video_path)
-        except Exception:
-            pass
+        if tmp_video_path:
+            try:
+                os.unlink(tmp_video_path)
+            except Exception:
+                pass
 
         if not success:
             st.markdown(
@@ -214,7 +240,7 @@ def render_overlay_tab(base_dir):
             )
         with r2:
             st.markdown(
-                metric_card("Source Video", uploaded_video.name),
+                metric_card("Source Video", video_label),
                 unsafe_allow_html=True,
             )
         with r3:

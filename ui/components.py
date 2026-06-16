@@ -23,3 +23,12 @@ def section_label(label):
     """Section label panel HTML string."""
     return f"<div class='section-label'>{label}</div>"
 
+def insight_panel(title, body):
+    """Insight card HTML string for actionable coaching cues."""
+    return f"""
+    <div class='insight-panel'>
+        <div class='insight-title'>{title}</div>
+        <div class='insight-body'>{body}</div>
+    </div>
+    """
+

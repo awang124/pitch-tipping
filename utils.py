@@ -1,6 +1,16 @@
-import ultralytics
+import os
+
 import pandas as pd
 import streamlit as st
+
+from processing.mediapipe_pose import resolve_model_path
+
+
+@st.cache_resource
+def load_pose_landmarker():
+    """Return path to MediaPipe pose_landmarker.task (cached for Streamlit)."""
+    return resolve_model_path(os.path.dirname(os.path.abspath(__file__)))
+
 
 def lr_coefficients_styler(top_features):
     """
@@ -35,9 +45,3 @@ def lr_coefficients_styler(top_features):
         .set_properties(**{"font-family": "'IBM Plex Mono', monospace"},
                         subset=["#", "β (L1 coefficient)"])
     )
-
-@st.cache_resource
-def load_models():
-    """Load YOLO pose and glove bounding box estimation models."""
-    return ultralytics.YOLO("yolov8x-pose.pt"), ultralytics.YOLO("GLOVE_MODEL.pt")
-

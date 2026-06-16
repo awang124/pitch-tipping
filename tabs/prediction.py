@@ -5,7 +5,7 @@ import streamlit as st
 import processing.tab1_helper as t1
 import processing.tab3_helper as t3
 
-from utils import load_models
+from utils import load_pose_landmarker
 from ui.components import info_panel, warn_panel, success_panel, section_label
 
 def render_prediction_tab(base_dir):
@@ -64,10 +64,11 @@ def render_prediction_tab(base_dir):
                 status_text = st.empty()
 
                 ### PERFORM MOTION ESTIMATION
-                with st.spinner("Initializing models:"):
-                    pose_m, glove_m = load_models()
+                with st.spinner("Initializing pose model:"):
+                    model_path = load_pose_landmarker()
                     success, meta = t1.processVideo(
-                        pred_vid_target, pred_kpt_target, pose_m, glove_m, progress_bar, status_text
+                        pred_vid_target, pred_kpt_target, model_path,
+                        progress_bar, status_text,
                     )
 
                 if success:

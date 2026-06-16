@@ -303,6 +303,62 @@ video {
     border: 1px solid var(--border) !important;
 }
 
+/* ── Pitch Compare demo ─────────────────────────────────────────────── */
+.compare-panel {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem;
+    background: var(--surface);
+    margin-bottom: 1.5rem;
+}
+.compare-badges {
+    display: flex;
+    gap: 1rem;
+    margin: 1rem 0 1.5rem;
+    flex-wrap: wrap;
+}
+.pitch-badge-fastball,
+.pitch-badge-offspeed {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 3px;
+}
+.pitch-badge-fastball {
+    color: var(--accent2);
+    background: rgba(56,189,248,0.1);
+    border: 1px solid rgba(56,189,248,0.25);
+}
+.pitch-badge-offspeed {
+    color: #fb923c;
+    background: rgba(251,146,60,0.1);
+    border: 1px solid rgba(251,146,60,0.25);
+}
+.insight-panel {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1rem 1.2rem;
+    min-height: 7rem;
+}
+.insight-title {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+.insight-body {
+    font-size: 0.88rem;
+    color: var(--text);
+    line-height: 1.5;
+}
+
 /* ── st.success / st.warning / st.error overrides ───────────────────── */
 [data-testid="stAlert"] {
     border-radius: 3px !important;

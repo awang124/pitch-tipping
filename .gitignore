@@ -9,6 +9,10 @@ datasets/
 Pitches/
 runs/
 Visualizations/
+*.log
+audit_report.csv
+pose_landmarker.task
+GLOVE_MODEL.pt
 *.avi
 *.jpg
 *.json
@@ -30,5 +34,5 @@ Visualizations/
 # POSE MODELS
 pose_model.pt
 POSE_MODEL.pt
-yolov8x-pose.pt
+yolov8*.pt
 

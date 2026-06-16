@@ -1,9 +1,10 @@
 import os
+import cv2
 import streamlit as st
 import processing.tab1_helper as t1
 
-from utils import load_models
-from ui.components import metric_card, info_panel, success_panel, section_label
+from utils import load_pose_landmarker
+from ui.components import metric_card, info_panel, success_panel, section_label, warn_panel
 
 def render_estimation_tab(base_dir):
     """
@@ -106,12 +107,12 @@ def render_estimation_tab(base_dir):
             )
             progress_bar = st.progress(0)
             status_text = st.empty()
-            with st.spinner("Initializing models:"):
-                pose_m, glove_m = load_models()
+            with st.spinner("Initializing pose model:"):
+                model_path = load_pose_landmarker()
 
             ### COMPUTE KEYPOINTS
             success, meta = t1.processVideo(
-                video_target, kpt_target, pose_m, glove_m, progress_bar, status_text
+                video_target, kpt_target, model_path, progress_bar, status_text
             )
 
             ### DISPLAY VIDEO METADATA
@@ -122,13 +123,89 @@ def render_estimation_tab(base_dir):
                     m1, m2, m3, m4 = st.columns(4)
                     for col, label, val in zip(
                         [m1, m2, m3, m4],
-                        ["# Total Frames", "# Window Frames",
+                        ["# Total Frames", "# Keypoint Frames",
                          "Frame Rate", "Video Duration (seconds)"],
                         [meta['num_total_frames'], meta['num_extracted_frames'],
                          meta['fps'], meta['duration']]
                     ):
                         with col:
                             st.markdown(metric_card(label, val), unsafe_allow_html=True)
+
+                    st.markdown(section_label("Extraction Quality"), unsafe_allow_html=True)
+                    q1, q2, q3, q4 = st.columns(4)
+                    qa_cards = [
+                        (q1, "Valid Joint %", f"{meta.get('avg_joint_pct', '—')}%"),
+                        (q2, "Glove Detection %", f"{meta.get('glove_pct', '—')}%"),
+                        (q3, "Hip Jitter (px)", meta.get("pitcher_track_jitter", "—")),
+                        (q4, "Delivery Type", meta.get("delivery_hint", "—")),
+                    ]
+                    for col, label, val in qa_cards:
+                        with col:
+                            st.markdown(metric_card(label, val), unsafe_allow_html=True)
+
+                    if meta.get("retried_tracking"):
+                        st.markdown(
+                            info_panel(
+                                "Tracking was auto-retried using arm-motion selection"
+                                " due to high hip jitter on the first pass."
+                            ),
+                            unsafe_allow_html=True,
+                        )
+
+                    if meta.get("pitcher_track_jitter", 0) > 80:
+                        st.markdown(
+                            warn_panel(
+                                "High hip jitter detected — the tracker may be following"
+                                " the umpire or another person. Review the preview below."
+                            ),
+                            unsafe_allow_html=True,
+                        )
+
+                    st.markdown(section_label("Skeleton Preview"), unsafe_allow_html=True)
+                    show_all = st.checkbox(
+                        "Show all detections (debug)",
+                        value=False,
+                        help="Draw every MediaPipe pose with bbox area and hip-x labels.",
+                        key="tab1_show_all_detections",
+                    )
+                    preview_frame = st.slider(
+                        "Preview frame",
+                        0,
+                        max(meta["num_extracted_frames"] - 1, 0),
+                        value=min(45, max(meta["num_extracted_frames"] - 1, 0)),
+                        key="tab1_preview_frame",
+                    )
+                    if show_all:
+                        preview_img = t1.renderAllDetectionsFrame(
+                            video_target, preview_frame, model_path=model_path,
+                        )
+                    else:
+                        preview_img = t1.renderPreviewFrame(
+                            video_target, kpt_target, preview_frame
+                        )
+                    if meta.get("dominant_hip_x_frac") is not None:
+                        dx = meta["dominant_hip_x_frac"]
+                        if meta.get("camera_hint") == "stretch_landscape" and dx < 0.45:
+                            st.markdown(
+                                warn_panel(
+                                    f"Tracked person hip center is left of frame"
+                                    f" (x={dx:.2f}). Expected pitcher on right (>0.45)"
+                                    f" — may be tracking umpire."
+                                ),
+                                unsafe_allow_html=True,
+                            )
+                    if preview_img is not None:
+                        st.image(
+                            cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB),
+                            caption=f"Frame {preview_frame + 1} overlay",
+                            width="stretch",
+                        )
+                    else:
+                        st.markdown(
+                            warn_panel("Could not render preview frame."),
+                            unsafe_allow_html=True,
+                        )
+
                 st.markdown(
                     success_panel(
                         f"✓ &nbsp; Pose and glove sequences stored at <code>{kpt_target}</code>"

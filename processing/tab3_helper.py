@@ -376,7 +376,10 @@ def loadFrameDataset(keypoints_root):
     -------
     Tuple (list of (frames, label) tuples, n_frames, feature_names).
     """
-    npy_files = glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
+    npy_files = [
+        f for f in glob.glob(os.path.join(keypoints_root, "**", "*.npy"), recursive=True)
+        if not os.path.basename(f).endswith("_full.npy")
+    ]
     npy_files.sort()
     npy_files = [
         f for f in npy_files 
@@ -393,15 +396,22 @@ def loadFrameDataset(keypoints_root):
     if not frame_counts:
         return [], 0, []
         
-    ### LOAD KEYPOINT SEQUENCES
+    ### LOAD KEYPOINT SEQUENCES (normalize length to modal frame count)
     n_frames = max(frame_counts, key=frame_counts.get)
     raw_seqs = []
     skipped = []
     for path in npy_files:
         frames = np.load(path, allow_pickle=True).tolist()
-        if len(frames) != n_frames:
-            skipped.append((os.path.basename(path), len(frames)))
-            continue
+        n = len(frames)
+        if n > n_frames:
+            frames = frames[-n_frames:]
+        elif n < n_frames:
+            pad = n_frames - n
+            zero_f = {
+                k: (np.zeros_like(v) if hasattr(v, "__len__") else 0)
+                for k, v in frames[0].items()
+            }
+            frames = [zero_f] * pad + frames
         lower = os.path.basename(path).lower()
         label = int("fastball" in lower or "cutter" in lower)
         raw_seqs.append((frames, label))
@@ -431,6 +441,8 @@ def loadSequences(root):
     for path in file_paths:
         f = os.path.basename(path)
         if not (name := f.lower()).endswith(".npy"):
+            continue
+        if name.endswith("_full.npy"):
             continue
         elif "changeup" in name:
             label = "changeup"
