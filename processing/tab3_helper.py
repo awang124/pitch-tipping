@@ -13,6 +13,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import LeaveOneOut, train_test_split
 
+from processing.kpt_utils import trimToWindupOnly
+
 LEFT_SHOULDER  = 5
 RIGHT_SHOULDER = 6
 LEFT_ELBOW     = 7
@@ -162,6 +164,9 @@ def extractFeatures(seq, label, fps=60):
     if len(seq) < 2:
         return {"class": label}
     if len(seq) and isinstance(seq[0], dict):
+        seq, _ = trimToWindupOnly(seq)
+        if len(seq) < 2:
+            return {"class": label}
         glove_seq = np.array(
             [frame.get("glove_box", [-1] * 4) for frame in seq], dtype=np.float32
         )
@@ -176,6 +181,9 @@ def extractFeatures(seq, label, fps=60):
             kpts_list.append(kp)
         seq = np.array(kpts_list, dtype=np.float32)
     else:
+        seq, _ = trimToWindupOnly(seq)
+        if len(seq) < 2:
+            return {"class": label}
         glove_seq = np.full((len(seq), 4), -1.0, dtype=np.float32)
 
     ### GET CLASS, FRAMERATE, DURATION
@@ -390,6 +398,7 @@ def loadFrameDataset(keypoints_root):
     frame_counts = {}
     for path in npy_files:
         frames = np.load(path, allow_pickle=True).tolist()
+        frames, _ = trimToWindupOnly(frames)
         n = len(frames)
         frame_counts[n] = frame_counts.get(n, 0) + 1
         
@@ -402,6 +411,7 @@ def loadFrameDataset(keypoints_root):
     skipped = []
     for path in npy_files:
         frames = np.load(path, allow_pickle=True).tolist()
+        frames, _ = trimToWindupOnly(frames)
         n = len(frames)
         if n > n_frames:
             frames = frames[-n_frames:]

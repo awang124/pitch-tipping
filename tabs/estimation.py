@@ -168,13 +168,27 @@ def render_estimation_tab(base_dir):
                         help="Draw every MediaPipe pose with bbox area and hip-x labels.",
                         key="tab1_show_all_detections",
                     )
+                    default_preview = meta.get("peak_knee_frame") or meta.get("windup_end") or 45
                     preview_frame = st.slider(
                         "Preview frame",
                         0,
                         max(meta["num_extracted_frames"] - 1, 0),
-                        value=min(45, max(meta["num_extracted_frames"] - 1, 0)),
+                        value=min(
+                            default_preview or 45,
+                            max(meta["num_extracted_frames"] - 1, 0),
+                        ),
                         key="tab1_preview_frame",
                     )
+                    if meta.get("peak_knee_frame") is not None:
+                        st.caption(
+                            f"Peak leg kick: frame {meta['peak_knee_frame']} "
+                            f"(Pitch Compare sync landmark)"
+                        )
+                    if meta.get("windup_end") is not None:
+                        st.caption(
+                            f"Estimated windup end: frame {meta['windup_end']} "
+                            f"(last frame before forward drive — used for tipping analysis)"
+                        )
                     if show_all:
                         preview_img = t1.renderAllDetectionsFrame(
                             video_target, preview_frame, model_path=model_path,

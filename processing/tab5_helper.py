@@ -30,6 +30,7 @@ KEYPOINT_NAMES = [
 HIGHLIGHT_MAP = {
     "glove":           None,
     "left_knee":       13,
+    "right_knee":      14,
     "right_elbow":     8,
     "left_shoulder":   5,
     "right_shoulder":  6,
@@ -40,6 +41,7 @@ HIGHLIGHT_MAP = {
 def drawSkeleton(
     frame, kpts, color, thickness=2, highlight_idx=-1,
     highlight_color=(0, 255, 255), frame_width=None, frame_height=None,
+    highlight_joints=None, highlight_edges=None,
 ):
     """
     Draw pose skeleton on a frame, with optional joint highlighting.
@@ -52,10 +54,18 @@ def drawSkeleton(
     thickness: Line thickness.
     highlight_idx: Joint index to highlight, or -1 for none.
     highlight_color: BGR color for highlighted joint.
+    highlight_joints: Optional set/list of joint indices to emphasize.
+    highlight_edges: Optional list of (a, b) skeleton edges to emphasize.
     """
+    joint_set = set(highlight_joints or [])
+    if highlight_idx >= 0:
+        joint_set.add(highlight_idx)
+    edge_set = {tuple(e) for e in (highlight_edges or [])}
+    edge_set |= {(b, a) for a, b in edge_set}
+
     for i, (x, y) in enumerate(kpts):
         if isValidKpt((x, y), frame_width, frame_height):
-            if i == highlight_idx:
+            if i in joint_set:
                 cv2.circle(frame, (int(x), int(y)), 10, highlight_color, -1)
                 cv2.circle(frame, (int(x), int(y)), 14, highlight_color, 2)
             else:
@@ -67,10 +77,16 @@ def drawSkeleton(
             if isValidKpt((x1, y1), frame_width, frame_height) and isValidKpt(
                 (x2, y2), frame_width, frame_height
             ):
-                edge_color = highlight_color if (
-                    a == highlight_idx or b == highlight_idx
-                ) else color
-                cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), edge_color, thickness)
+                if (a, b) in edge_set or a in joint_set or b in joint_set:
+                    edge_color = highlight_color
+                    edge_thickness = max(thickness + 1, 3)
+                else:
+                    edge_color = color
+                    edge_thickness = thickness
+                cv2.line(
+                    frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                    edge_color, edge_thickness,
+                )
 
 
 def _resolveHighlight(highlight):
@@ -99,6 +115,11 @@ def _composeOverlayFrame(
     skeleton_opacity,
     frame_label,
     draw_glove=True,
+    skeleton_color=(0, 220, 255),
+    highlight_color=(0, 80, 255),
+    highlight_joints=None,
+    highlight_edges=None,
+    highlight_label="",
 ):
     overlay = frame.copy()
     cv2.addWeighted(frame, 0.6, np.zeros_like(frame), 0.4, 0, overlay)
@@ -106,22 +127,24 @@ def _composeOverlayFrame(
     skeleton_layer = overlay.copy()
     drawSkeleton(
         skeleton_layer, kpts,
-        color=(0, 220, 255),
+        color=skeleton_color,
         thickness=2,
         highlight_idx=highlight_idx,
-        highlight_color=(0, 80, 255),
+        highlight_color=highlight_color,
         frame_width=fw,
         frame_height=fh,
+        highlight_joints=highlight_joints,
+        highlight_edges=highlight_edges,
     )
     cv2.addWeighted(skeleton_layer, skeleton_opacity, overlay, 1 - skeleton_opacity, 0, overlay)
 
     if draw_glove and glove[0] != -1:
         gx1, gy1, gx2, gy2 = int(glove[0]), int(glove[1]), int(glove[2]), int(glove[3])
-        box_color = (0, 80, 255) if is_glove_highlight else (0, 220, 255)
+        box_color = highlight_color if is_glove_highlight else skeleton_color
         cv2.rectangle(overlay, (gx1, gy1), (gx2, gy2), box_color, 2)
         if is_glove_highlight:
             cx, cy = (gx1 + gx2) // 2, (gy1 + gy2) // 2
-            cv2.circle(overlay, (cx, cy), 35, (0, 80, 255), 3)
+            cv2.circle(overlay, (cx, cy), 35, highlight_color, 3)
 
     cv2.putText(
         overlay,
@@ -130,12 +153,12 @@ def _composeOverlayFrame(
         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1,
     )
 
-    if highlight:
-        label = highlight.replace("_", " ").upper()
+    if highlight or highlight_label:
+        label = (highlight_label or highlight).replace("_", " ").upper()
         cv2.putText(
             overlay, f"HIGHLIGHT: {label}",
             (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 80, 255), 2,
+            cv2.FONT_HERSHEY_SIMPLEX, 0.9, highlight_color, 2,
         )
 
     return overlay

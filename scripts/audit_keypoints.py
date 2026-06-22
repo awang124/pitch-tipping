@@ -18,10 +18,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from processing.kpt_utils import (
     auditStatus,
     computeQualityMetrics,
+    findPeakKneeFrame,
     findWindupEnd,
     loadKeypointMeta,
     loadKeypointSequence,
+    peakKneeFrac,
+    peakKneeFracIsSuspicious,
+    resolvePeakKneeFrame,
+    resolveWindupEnd,
     stripPaddingFrames,
+    windupEndFrac,
+    windupFracIsSuspicious,
 )
 
 
@@ -33,8 +40,20 @@ def auditFile(path):
     fw = meta.get("frame_width")
     fh = meta.get("frame_height")
     metrics = computeQualityMetrics(kpts, gloves, fw, fh)
-    windup = findWindupEnd(kpts) if len(kpts) else 0
+    n = len(kpts)
+    windup_raw = findWindupEnd(kpts) if n else 0
+    windup_resolved = resolveWindupEnd(kpts) if n else None
+    windup_frac = windupEndFrac(windup_resolved, n) if windup_resolved else windupEndFrac(windup_raw, n)
+    windup_trim_ok = windup_resolved is not None
+    windup_warn = windupFracIsSuspicious(windup_frac)
+    peak_raw = findPeakKneeFrame(kpts) if n else 0
+    peak_resolved = resolvePeakKneeFrame(kpts) if n else None
+    peak_frac = peakKneeFrac(peak_resolved, n) if peak_resolved is not None else peakKneeFrac(peak_raw, n)
+    peak_knee_ok = peak_resolved is not None
+    peak_knee_warn = peakKneeFracIsSuspicious(peak_frac)
     status = auditStatus(metrics)
+    if (windup_warn or peak_knee_warn) and status == "PASS":
+        status = "WARN"
     x_min, x_max = float(kpts[:, :, 0].min()), float(kpts[:, :, 0].max())
     y_min, y_max = float(kpts[:, :, 1].min()), float(kpts[:, :, 1].max())
     x_span = round(x_max - x_min, 1) if len(kpts) else 0
@@ -54,7 +73,15 @@ def auditFile(path):
         "avg_joint_pct": metrics["avg_joint_pct"],
         "glove_pct": metrics["glove_pct"],
         "hip_jitter_px": metrics["hip_jitter_px"],
-        "windup_end": windup,
+        "windup_end": windup_resolved if windup_resolved is not None else windup_raw,
+        "windup_end_frac": windup_frac,
+        "num_windup_frames": windup_resolved if windup_resolved is not None else n,
+        "windup_trim_ok": windup_trim_ok,
+        "windup_warn": windup_warn,
+        "peak_knee_frame": peak_resolved if peak_resolved is not None else peak_raw,
+        "peak_knee_frac": peak_frac,
+        "peak_knee_ok": peak_knee_ok,
+        "peak_knee_warn": peak_knee_warn,
         "sync_frame": metrics["sync_frame"],
         "delivery_hint": metrics["delivery_hint"],
         "x_min": round(x_min, 1),

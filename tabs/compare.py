@@ -5,30 +5,28 @@ import subprocess
 import streamlit as st
 
 import processing.demo_helper as demo
-import processing.tab2_helper as t2
+from processing.compare_features import COMPARE_FEATURE_OPTIONS
 from processing.kpt_utils import videoPathFromKeypoints
+from processing.viz_paths import (
+    compareArtifactPaths,
+    comparisonIsCached,
+    findPlayableVideo,
+    loadCompareMetrics,
+    saveCompareMetrics,
+)
 from ui.components import (
     info_panel,
     insight_panel,
-    metric_card,
     section_label,
     success_panel,
     warn_panel,
 )
 
-FEATURES = [
-    "None",
-    "Left Knee",
-    "Right Elbow",
-    "Left Shoulder",
-    "Right Shoulder",
-    "Left Hip",
-    "Right Hip",
-]
+FEATURES = [label for label, _ in COMPARE_FEATURE_OPTIONS]
 
 LAYOUT_OPTIONS = {
     "Side by Side": "side_by_side",
-    "Stacked": "stacked",
+    "Overlay": "stacked",
 }
 
 
@@ -45,22 +43,41 @@ def _find_ffmpeg():
 def _highlight_key(name):
     if name == "None":
         return ""
+    for label, key in COMPARE_FEATURE_OPTIONS:
+        if label == name:
+            return key
     return name.lower().replace(" ", "_")
 
 
-def _cache_key(pitcher, fb, os_pitch, layout, highlight, opacity):
-    return f"{pitcher}|{fb}|{os_pitch}|{layout}|{highlight}|{opacity:.2f}"
+def _transcode_for_web(ffmpeg, raw_path, web_path):
+    if not ffmpeg or not os.path.isfile(raw_path):
+        return False
+    subprocess.run(
+        [ffmpeg, "-y", "-i", raw_path, "-vcodec", "libx264", web_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return os.path.isfile(web_path)
 
 
-def _output_paths(base_dir, pitcher, fb, os_pitch, layout):
-    out_dir = os.path.join(base_dir, "Visualizations")
-    os.makedirs(out_dir, exist_ok=True)
-    fb_stem = os.path.splitext(fb)[0]
-    os_stem = os.path.splitext(os_pitch)[0]
-    base = f"compare_{pitcher}_{fb_stem}_vs_{os_stem}_{layout}"
-    raw = os.path.join(out_dir, f"{base}.mp4")
-    web = os.path.join(out_dir, f"web_{base}.mp4")
-    return raw, web
+def _render_comparison(
+    fb_kpts, os_kpts, artifacts, layout, highlight, skeleton_opacity, base_dir,
+):
+    metrics = demo.renderPitchComparison(
+        fb_kpts,
+        os_kpts,
+        artifacts["raw"],
+        layout=layout,
+        highlight=highlight,
+        skeleton_opacity=skeleton_opacity,
+        base_dir=base_dir,
+        label1="FASTBALL",
+        label2="OFFSPEED",
+    )
+    saveCompareMetrics(artifacts["metrics"], metrics)
+    _transcode_for_web(_find_ffmpeg(), artifacts["raw"], artifacts["web"])
+    return metrics
 
 
 def render_compare_tab(base_dir):
@@ -68,9 +85,10 @@ def render_compare_tab(base_dir):
 
     st.markdown(
         info_panel(
-            "Pick a fastball and offspeed pitch, choose a layout and joint to highlight, "
+            "Pick a fastball and offspeed pitch, choose side-by-side or overlay layout, "
             "then generate a DTW-synced comparison on real footage. "
-            "Use <strong>Find Best Pair</strong> to auto-select the clearest tipping cue."
+            "Cached comparisons load instantly from "
+            "<code>Visualizations/&lt;pitcher&gt;/</code>."
         ),
         unsafe_allow_html=True,
     )
@@ -91,7 +109,9 @@ def render_compare_tab(base_dir):
         st.markdown(warn_panel("No pitcher folders found in Keypoints/."), unsafe_allow_html=True)
         return
 
-    default_pitcher = "Gburg16" if "Gburg16" in pitchers else pitchers[0]
+    default_pitcher = "Gburg16_stretch_cropped" if "Gburg16_stretch_cropped" in pitchers else (
+        "Gburg16" if "Gburg16" in pitchers else pitchers[0]
+    )
     pitcher_idx = pitchers.index(default_pitcher) if default_pitcher in pitchers else 0
 
     ctrl1, ctrl2, ctrl3 = st.columns(3, gap="large")
@@ -124,33 +144,16 @@ def render_compare_tab(base_dir):
     st.session_state.compare_fb = fb_pitch
     st.session_state.compare_os = os_pitch
 
-    opt1, opt2, opt3, opt4 = st.columns(4, gap="large")
+    opt1, opt2, opt3 = st.columns(3, gap="large")
     with opt1:
         layout_label = st.radio("Layout", list(LAYOUT_OPTIONS.keys()), horizontal=True)
         layout = LAYOUT_OPTIONS[layout_label]
     with opt2:
-        highlight_target = st.selectbox("Joint Highlight", FEATURES, key="compare_highlight")
+        highlight_target = st.selectbox("Feature Highlight", FEATURES, key="compare_highlight")
     with opt3:
         skeleton_opacity = st.slider(
             "Skeleton Opacity", 0.3, 1.0, 0.85, 0.05, key="compare_opacity"
         )
-    with opt4:
-        st.markdown("<div style='padding-top: 1.65rem;'></div>", unsafe_allow_html=True)
-        find_best = st.button("Find Best Pair", width="stretch")
-
-    if find_best and highlight_target != "None":
-        pitcher_root = os.path.join(keypoint_root, pitcher)
-        with st.spinner(f"Scanning {pitcher} for best {highlight_target} contrast…"):
-            best_fb, best_os = t2.findBestPitchPair(pitcher_root, highlight_target)
-            if best_fb and best_os:
-                st.session_state.compare_fb = os.path.basename(best_fb)
-                st.session_state.compare_os = os.path.basename(best_os)
-                st.rerun()
-            else:
-                st.markdown(
-                    warn_panel("Could not find a fastball/offspeed pair for auto-selection."),
-                    unsafe_allow_html=True,
-                )
 
     fb_kpts = os.path.join(keypoint_root, pitcher, fb_pitch)
     os_kpts = os.path.join(keypoint_root, pitcher, os_pitch)
@@ -183,101 +186,81 @@ def render_compare_tab(base_dir):
     )
 
     highlight = _highlight_key(highlight_target)
-    cache_key = _cache_key(pitcher, fb_pitch, os_pitch, layout, highlight, skeleton_opacity)
-    raw_path, web_path = _output_paths(base_dir, pitcher, fb_pitch, os_pitch, layout)
+    artifacts = compareArtifactPaths(
+        base_dir, pitcher, fb_pitch, os_pitch, layout, highlight, skeleton_opacity,
+    )
+    play_path = findPlayableVideo(artifacts)
+    cached = comparisonIsCached(artifacts)
+    metrics = loadCompareMetrics(artifacts["metrics"]) if cached else None
+
+    if cached:
+        st.markdown(
+            info_panel(
+                f"Using cached comparison "
+                f"<code>Visualizations/{pitcher}/{artifacts['base']}.mp4</code>"
+            ),
+            unsafe_allow_html=True,
+        )
 
     btn_col, _ = st.columns([1, 3])
     with btn_col:
-        generate = st.button("Generate Comparison", type="primary", width="stretch")
+        btn_label = "Regenerate Comparison" if cached else "Generate Comparison"
+        generate = st.button(btn_label, type="primary", width="stretch")
 
-    if generate or (
-        st.session_state.get("compare_cache_key") == cache_key
-        and os.path.exists(web_path if os.path.exists(web_path) else raw_path)
-    ):
-        if generate or st.session_state.get("compare_cache_key") != cache_key:
-            with st.spinner("Aligning pitches and rendering comparison…"):
-                try:
-                    metrics = demo.renderPitchComparison(
-                        fb_kpts,
-                        os_kpts,
-                        raw_path,
-                        layout=layout,
-                        highlight=highlight,
-                        skeleton_opacity=skeleton_opacity,
-                        base_dir=base_dir,
-                        label1="FASTBALL",
-                        label2="OFFSPEED",
+    if generate:
+        with st.spinner("Aligning pitches and rendering comparison…"):
+            try:
+                metrics = _render_comparison(
+                    fb_kpts, os_kpts, artifacts, layout, highlight,
+                    skeleton_opacity, base_dir,
+                )
+                play_path = findPlayableVideo(artifacts)
+                if not play_path:
+                    st.markdown(
+                        warn_panel(
+                            "Render finished but no playable video was found. "
+                            "Install FFmpeg with <code>brew install ffmpeg</code>."
+                        ),
+                        unsafe_allow_html=True,
                     )
-                    st.session_state.compare_metrics = metrics
-                    st.session_state.compare_cache_key = cache_key
-
-                    ffmpeg = _find_ffmpeg()
-                    if ffmpeg:
-                        subprocess.run(
-                            [ffmpeg, "-y", "-i", raw_path, "-vcodec", "libx264", web_path],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                        )
-                    else:
-                        st.markdown(
-                            warn_panel(
-                                "FFmpeg not found — video may not play in browser. "
-                                "Install with <code>brew install ffmpeg</code>."
-                            ),
-                            unsafe_allow_html=True,
-                        )
-                except Exception as e:
-                    st.markdown(warn_panel(f"Comparison failed: {e}"), unsafe_allow_html=True)
                     return
-
-            if generate:
                 st.markdown(
-                    success_panel(f"Comparison saved to <code>{raw_path}</code>"),
+                    success_panel(
+                        f"Comparison saved to <code>Visualizations/{pitcher}/</code>"
+                    ),
                     unsafe_allow_html=True,
                 )
+            except Exception as e:
+                st.markdown(warn_panel(f"Comparison failed: {e}"), unsafe_allow_html=True)
+                return
 
-        play_path = web_path if os.path.exists(web_path) else raw_path
-        if os.path.exists(play_path):
-            st.markdown(section_label("Comparison"), unsafe_allow_html=True)
-            st.markdown("<div class='compare-panel'>", unsafe_allow_html=True)
-            st.video(play_path)
-            st.markdown("</div>", unsafe_allow_html=True)
+    play_path = play_path or findPlayableVideo(artifacts)
+    if play_path and os.path.isfile(play_path):
+        if metrics is None:
+            metrics = loadCompareMetrics(artifacts["metrics"])
 
-            metrics = st.session_state.get("compare_metrics", {})
-            if metrics:
-                st.markdown(section_label("Actionable Insights"), unsafe_allow_html=True)
-                i1, i2, i3 = st.columns(3, gap="large")
-                with i1:
-                    watch = (
-                        f"Peak <strong>{metrics.get('highlight_joint', 'joint')}</strong> "
-                        f"separation: <strong>{metrics.get('peak_separation_px', 0)} px</strong> "
-                        f"at synced frame {metrics.get('peak_frame_idx', 0)}."
-                    )
-                    st.markdown(insight_panel("What to Watch", watch), unsafe_allow_html=True)
-                with i2:
-                    why = (
-                        f"Fastball motion score: <strong>{metrics.get('fb_score', 0)}</strong> · "
-                        f"Offspeed: <strong>{metrics.get('os_score', 0)}</strong> "
-                        f"({metrics.get('dtw_path_length', 0)} synced frames)."
-                    )
-                    st.markdown(insight_panel("Why It Matters", why), unsafe_allow_html=True)
-                with i3:
-                    action = metrics.get("suggested_action", "")
-                    st.markdown(insight_panel("Suggested Action", action), unsafe_allow_html=True)
+        st.markdown(section_label("Comparison"), unsafe_allow_html=True)
+        st.markdown("<div class='compare-panel'>", unsafe_allow_html=True)
+        st.video(play_path)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-                r1, r2, r3 = st.columns(3)
-                with r1:
-                    st.markdown(
-                        metric_card("Fastball", fb_pitch),
-                        unsafe_allow_html=True,
-                    )
-                with r2:
-                    st.markdown(
-                        metric_card("Offspeed", os_pitch),
-                        unsafe_allow_html=True,
-                    )
-                with r3:
-                    st.markdown(
-                        metric_card("Highlight", highlight_target),
-                        unsafe_allow_html=True,
-                    )
+        if metrics:
+            peak_t = metrics.get("peak_time_sec")
+            if peak_t is None:
+                out_frames = metrics.get("output_frames", 0)
+                dur = metrics.get("duration_sec", 0)
+                if out_frames and dur:
+                    peak_t = round(metrics.get("peak_frame_idx", 0) / out_frames * dur, 1)
+                else:
+                    peak_t = 0
+            watch = (
+                f"Peak <strong>{metrics.get('highlight_feature', metrics.get('highlight_joint', 'feature'))}</strong> "
+                f"difference: <strong>{metrics.get('peak_separation_px', 0)}</strong> "
+                f"at <strong>{peak_t}s</strong> into the video."
+            )
+            st.markdown(insight_panel("What to Watch", watch), unsafe_allow_html=True)
+    elif not generate:
+        st.markdown(
+            info_panel("No cached comparison for this pair yet — click Generate Comparison."),
+            unsafe_allow_html=True,
+        )

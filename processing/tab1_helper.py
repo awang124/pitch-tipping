@@ -11,6 +11,8 @@ from processing.kpt_utils import (
     computeQualityMetrics,
     findDeliverySyncFrame,
     isStretchLandscapePath,
+    resolvePeakKneeFrame,
+    resolveWindupEnd,
     saveKeypointMeta,
 )
 from processing.mediapipe_pose import detect_image_frame, detect_video_frame, image_landmarker
@@ -436,9 +438,11 @@ def detectKeypoints(
     return kpts, nframes, multi_pose_frames
 
 
-def processVideo(video_path, output_path, model_path, progress, status):
+def processVideo(video_path, output_path, model_path, progress, status, num_poses=None):
     """Run full MediaPipe extraction pipeline on a video file."""
     from processing.mediapipe_pose import video_landmarker
+
+    num_poses = NUM_POSES if num_poses is None else num_poses
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -452,7 +456,7 @@ def processVideo(video_path, output_path, model_path, progress, status):
     if stretch_landscape:
         use_motion_lock = warmupMultiPoseCount(model_path, cap, fps=fps) >= 8
 
-    with video_landmarker(model_path, num_poses=NUM_POSES) as landmarker:
+    with video_landmarker(model_path, num_poses=num_poses) as landmarker:
         kpts, nframes, multi_pose_frames = detectKeypoints(
             cap, landmarker, progress, status,
             video_path=video_path, fps=fps,
@@ -465,7 +469,7 @@ def processVideo(video_path, output_path, model_path, progress, status):
         jitter = _hipJitterFromKpts(kpts)
         if jitter > JITTER_RETRY_THRESHOLD:
             cap = cv2.VideoCapture(video_path)
-            with video_landmarker(model_path, num_poses=NUM_POSES) as landmarker:
+            with video_landmarker(model_path, num_poses=num_poses) as landmarker:
                 retry_kpts, _, retry_multi = detectKeypoints(
                     cap, landmarker, progress, status,
                     video_path=video_path,
@@ -487,6 +491,8 @@ def processVideo(video_path, output_path, model_path, progress, status):
     only_kpts = np.array([f["keypoints"] for f in kpts], dtype=np.float32)
     gloves = np.array([f.get("glove_box", [-1] * 4) for f in kpts])
     sync_frame = findDeliverySyncFrame(only_kpts) if len(only_kpts) else 0
+    windup_end = resolveWindupEnd(only_kpts) if len(only_kpts) else None
+    peak_knee_frame = resolvePeakKneeFrame(only_kpts) if len(only_kpts) else None
     video_align_start = next(
         (int(f["video_frame"]) for f in kpts if f.get("video_frame", -1) >= 0),
         0,
@@ -508,6 +514,8 @@ def processVideo(video_path, output_path, model_path, progress, status):
         "frame_width": frame_width,
         "frame_height": frame_height,
         "sync_frame": sync_frame,
+        "windup_end": windup_end,
+        "peak_knee_frame": peak_knee_frame,
         "video_align_start": video_align_start,
         "delivery_hint": qa["delivery_hint"],
         "pitcher_track_jitter": qa["hip_jitter_px"],
@@ -517,6 +525,7 @@ def processVideo(video_path, output_path, model_path, progress, status):
         "dominant_hip_x_frac": dominant_x,
         "pose_backend": "mediapipe",
         "num_poses_detected": multi_pose_frames,
+        "num_poses_setting": num_poses,
         **qa,
     }
     saveKeypointMeta(output_path, meta)

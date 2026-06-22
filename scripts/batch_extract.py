@@ -48,6 +48,10 @@ def main():
     parser.add_argument("--base-dir", default=".", help="Project root (Pitches/ and Keypoints/)")
     parser.add_argument("--folder", default=None, help="Process only this pitcher subfolder")
     parser.add_argument("--force", action="store_true", help="Re-extract even if .npy exists")
+    parser.add_argument(
+        "--num-poses", type=int, default=2, choices=(1, 2),
+        help="MediaPipe poses per frame (use 1 for cropped/single-person clips)",
+    )
     args = parser.parse_args()
 
     base = os.path.abspath(args.base_dir)
@@ -60,6 +64,7 @@ def main():
 
     model_path = resolve_model_path(base)
     print(f"MediaPipe model: {model_path}")
+    print(f"num_poses: {args.num_poses}")
     progress, status = _Progress(), _Status()
 
     videos = findVideos(pitch_root, args.folder)
@@ -78,7 +83,8 @@ def main():
         t0 = time.perf_counter()
         try:
             ok, meta = processVideo(
-                video_path, kpt_path, model_path, progress, status
+                video_path, kpt_path, model_path, progress, status,
+                num_poses=args.num_poses,
             )
             elapsed = time.perf_counter() - t0
             if ok:

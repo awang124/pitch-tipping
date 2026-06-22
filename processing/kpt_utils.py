@@ -7,6 +7,13 @@ DELIVERY_POST_FRAMES = 15
 DELIVERY_POST_KNEE_FRAMES = 20
 PEAK_KNEE_SKIP_FRAC = 0.10
 MIN_DELIVERY_FRAMES = 20
+WINDUP_MIN_FRAMES = 20
+WINDUP_MIN_FRAC = 0.05
+WINDUP_WARN_FRAC_LO = 0.15
+WINDUP_WARN_FRAC_HI = 0.85
+PEAK_KNEE_MIN_FRAC = 0.05
+PEAK_KNEE_WARN_FRAC_LO = 0.10
+PEAK_KNEE_WARN_FRAC_HI = 0.55
 META_SUFFIX = "_meta.json"
 ARM_JOINT_INDICES = (5, 6, 7, 8, 9, 10)
 WARMUP_FRAMES = 25
@@ -177,19 +184,61 @@ def findWindupEnd(kpts):
     return minidx
 
 
+def _leadKneeY(kpts):
+    """Per-frame Y of the lifted (lead) knee; NaN when neither knee is valid."""
+    lk, rk = kpts[:, 13, 1], kpts[:, 14, 1]
+    lv, rv = lk != 0, rk != 0
+    out = np.full(len(kpts), np.nan, dtype=np.float64)
+    both = lv & rv
+    out[both] = np.minimum(lk[both], rk[both])
+    out[lv & ~rv] = lk[lv & ~rv]
+    out[rv & ~lv] = rk[rv & ~lv]
+    return out
+
+
 def findPeakKneeFrame(kpts):
-    """Frame of maximum knee lift (min knee Y), ignoring early noisy frames."""
+    """Frame of maximum knee lift (min lead-knee Y), ignoring early noisy frames."""
     if kpts.ndim != 3 or len(kpts) == 0:
         return 0
-    knee_y = (kpts[:, 13, 1] + kpts[:, 14, 1]) / 2
-    valid = (kpts[:, 13, 1] != 0) | (kpts[:, 14, 1] != 0)
+    knee_y = _leadKneeY(kpts)
     start = int(len(kpts) * PEAK_KNEE_SKIP_FRAC)
-    search = knee_y.astype(np.float64)
+    search = knee_y.copy()
     search[:start] = np.nan
-    search[~valid] = np.nan
     if not np.any(~np.isnan(search)):
         return len(kpts) // 2
     return int(np.nanargmin(search))
+
+
+def resolvePeakKneeFrame(kpts, min_frames=WINDUP_MIN_FRAMES, min_frac=PEAK_KNEE_MIN_FRAC):
+    """
+    Peak leg-kick frame with reliability guards.
+
+    Returns frame index in [min_frames, len(kpts)) or None if unreliable.
+    """
+    kpts = _seqToKptsArray(kpts) if not isinstance(kpts, np.ndarray) or kpts.ndim != 3 else kpts
+    n = len(kpts)
+    if n < 2:
+        return None
+    frame = int(findPeakKneeFrame(kpts))
+    frame = max(frame, min_frames)
+    frame = min(frame, n - 1)
+    if frame < n * min_frac:
+        return None
+    return frame
+
+
+def peakKneeFrac(peak_knee_frame, num_frames):
+    """Fraction of sequence at peak knee lift."""
+    if num_frames <= 0 or peak_knee_frame is None:
+        return None
+    return round(peak_knee_frame / num_frames, 3)
+
+
+def peakKneeFracIsSuspicious(frac):
+    """True when peak knee fraction is likely mis-detected."""
+    if frac is None:
+        return True
+    return frac < PEAK_KNEE_WARN_FRAC_LO or frac > PEAK_KNEE_WARN_FRAC_HI
 
 
 def findDeliverySyncFrame(kpts):
@@ -217,6 +266,106 @@ def trimToDeliveryWindow(kpts, pre=DELIVERY_PRE_FRAMES, post=DELIVERY_POST_FRAME
     if stop - start < MIN_DELIVERY_FRAMES:
         return kpts, end
     return kpts[start:stop], end
+
+
+def _seqLength(seq):
+    if seq is None:
+        return 0
+    if isinstance(seq, np.ndarray):
+        return len(seq)
+    return len(seq)
+
+
+def _seqToKptsArray(seq):
+    """Convert frame dict list or (T,17,2) array to numpy keypoints."""
+    if isinstance(seq, np.ndarray):
+        if seq.ndim == 3:
+            return seq.astype(np.float32)
+        return np.zeros((0, 17, 2), dtype=np.float32)
+    if not seq:
+        return np.zeros((0, 17, 2), dtype=np.float32)
+    if isinstance(seq[0], dict):
+        kpts = []
+        for frame in seq:
+            kp = np.array(frame["keypoints"], dtype=np.float32)
+            if kp.shape != (17, 2):
+                if kp.shape == (17, 3):
+                    kp = kp[:, :2]
+                else:
+                    kp = np.zeros((17, 2), dtype=np.float32)
+            kpts.append(kp)
+        return np.array(kpts, dtype=np.float32)
+    return np.array(seq, dtype=np.float32)
+
+
+def resolveWindupEnd(kpts, min_frames=WINDUP_MIN_FRAMES, min_frac=WINDUP_MIN_FRAC):
+    """
+    Strict windup end (findWindupEnd) with reliability guards.
+
+    Returns frame index in (min_frames, len(kpts)] or None if unreliable.
+    """
+    kpts = _seqToKptsArray(kpts) if not isinstance(kpts, np.ndarray) or kpts.ndim != 3 else kpts
+    n = len(kpts)
+    if n < 2:
+        return None
+    end = int(findWindupEnd(kpts))
+    end = max(end, min_frames)
+    end = min(end, n)
+    if end < n * min_frac:
+        return None
+    return end
+
+
+def windupEndFrac(windup_end, num_frames):
+    """Fraction of sequence before windup end."""
+    if num_frames <= 0 or windup_end is None:
+        return None
+    return round(windup_end / num_frames, 3)
+
+
+def windupFracIsSuspicious(frac):
+    """True when detected windup fraction is likely mis-detected."""
+    if frac is None:
+        return True
+    return frac < WINDUP_WARN_FRAC_LO or frac > WINDUP_WARN_FRAC_HI
+
+
+def trimToWindupOnly(seq, end=None, min_frames=WINDUP_MIN_FRAMES, min_frac=WINDUP_MIN_FRAC):
+    """
+    Slice sequence to [0, windup_end) for tipping analysis.
+
+    Accepts (T, 17, 2) ndarray or list of per-frame dicts.
+    Returns (trimmed_seq, info) where info has windup_end, windup_trim_ok, windup_end_frac.
+    """
+    n = _seqLength(seq)
+    info = {
+        "windup_end": None,
+        "windup_trim_ok": False,
+        "windup_end_frac": None,
+        "num_windup_frames": n,
+    }
+    if n < 2:
+        return seq, info
+
+    kpts = _seqToKptsArray(seq)
+    if end is None:
+        end = resolveWindupEnd(kpts, min_frames=min_frames, min_frac=min_frac)
+    if end is None:
+        info["num_windup_frames"] = n
+        return seq, info
+
+    end = int(max(1, min(end, n)))
+    frac = windupEndFrac(end, n)
+    info.update({
+        "windup_end": end,
+        "windup_trim_ok": True,
+        "windup_end_frac": frac,
+        "num_windup_frames": end,
+    })
+
+    if isinstance(seq, np.ndarray):
+        return seq[:end], info
+    return seq[:end], info
 
 
 def computeQualityMetrics(kpts, gloves, frame_width=None, frame_height=None):

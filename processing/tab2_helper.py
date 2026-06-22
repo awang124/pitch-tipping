@@ -11,6 +11,7 @@ from processing.kpt_utils import (
     findDeliverySyncFrame,
     isValidKpt,
     loadKeypointMeta,
+    trimToWindupOnly,
     videoPathFromKeypoints,
 )
 
@@ -49,6 +50,10 @@ def scorePitch(file, feature_grp):
     try:
         if not len(data := np.load(file, allow_pickle=True)):
             return 0
+        if isinstance(data, np.ndarray) and data.dtype == object:
+            data = data.tolist()
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            data, _ = trimToWindupOnly(data)
         if "glove" in (feat := feature_grp.split(" (")[0].lower().replace(" ", "_")):
             if not (valid_gloves := [
                 d["glove_box"] for d in data if "glove_box" in d.keys()
@@ -60,9 +65,12 @@ def scorePitch(file, feature_grp):
                 return 0
             return np.max(np.linalg.norm(np.diff(g_centers, axis=0), axis=1))
         seq = np.array([d["keypoints"] for d in data])
+        seq, _ = trimToWindupOnly(seq)
+        if len(seq) < 2:
+            return 0
         idx = {
             "left_shoulder": 5, "right_shoulder": 6, "right_elbow": 8,
-            "left_hip": 11, "right_hip": 12, "left_knee": 13
+            "left_hip": 11, "right_hip": 12, "left_knee": 13, "right_knee": 14,
         }.get(feat, 13)
         return np.max(np.linalg.norm(np.diff(seq[:, idx, :], axis=0), axis=1))
     except:
@@ -132,16 +140,15 @@ def _loadPitchSequenceArrays(kpts_path):
     return kpts, glove, video_frames
 
 
-def _trimDeliveryWithVideoFrames(kpts, glove, video_frames):
-    """Mirror trimToDeliveryWindow while keeping video_frame tags aligned."""
+def _trimWindupWithVideoFrames(kpts, glove, video_frames):
+    """Slice to [0, windup_end) while keeping video_frame tags aligned."""
     if len(kpts) == 0:
-        return kpts, glove, video_frames
-    end = findDeliverySyncFrame(kpts)
-    start = max(0, end - DELIVERY_PRE_FRAMES)
-    stop = min(len(kpts), end + DELIVERY_POST_FRAMES)
-    if stop - start < MIN_DELIVERY_FRAMES:
-        return kpts, glove, video_frames
-    return kpts[start:stop], glove[start:stop], video_frames[start:stop]
+        return kpts, glove, video_frames, {"windup_trim_ok": False}
+    trimmed, info = trimToWindupOnly(kpts)
+    end = info.get("windup_end")
+    if end is None or end >= len(kpts):
+        return kpts, glove, video_frames, info
+    return trimmed, glove[:end], video_frames[:end], info
 
 
 def loadAndAlignPitchPair(kpts1_path, kpts2_path, trim_delivery=True):
@@ -151,21 +158,30 @@ def loadAndAlignPitchPair(kpts1_path, kpts2_path, trim_delivery=True):
     Parameters
     ----------
     kpts1_path, kpts2_path: Paths to .npy keypoint files.
-    trim_delivery: If True, trim to delivery window before DTW (Tab 2 default).
-                   If False, use the full extracted sequence for whole-pitch compare.
+    trim_delivery: If True, trim to windup-only window before DTW (Tab 2 default).
+                   If False, use the full extracted sequence.
 
     Returns
     -------
-    dict with keys kpts1, glove1, video_frames1, kpts2, glove2, video_frames2, path.
+    dict with keys kpts1, glove1, video_frames1, kpts2, glove2, video_frames2, path,
+    windup_end1, windup_end2, windup_trim_ok1, windup_trim_ok2.
     """
     kpts1, glove1, vf1 = _loadPitchSequenceArrays(kpts1_path)
     kpts2, glove2, vf2 = _loadPitchSequenceArrays(kpts2_path)
     if kpts1 is None or kpts2 is None or len(kpts1) == 0 or len(kpts2) == 0:
         raise ValueError("One or both keypoint files are empty.")
 
+    windup_meta = {"windup_end1": None, "windup_end2": None,
+                   "windup_trim_ok1": False, "windup_trim_ok2": False}
     if trim_delivery:
-        kpts1, glove1, vf1 = _trimDeliveryWithVideoFrames(kpts1, glove1, vf1)
-        kpts2, glove2, vf2 = _trimDeliveryWithVideoFrames(kpts2, glove2, vf2)
+        kpts1, glove1, vf1, info1 = _trimWindupWithVideoFrames(kpts1, glove1, vf1)
+        kpts2, glove2, vf2, info2 = _trimWindupWithVideoFrames(kpts2, glove2, vf2)
+        windup_meta = {
+            "windup_end1": info1.get("windup_end"),
+            "windup_end2": info2.get("windup_end"),
+            "windup_trim_ok1": info1.get("windup_trim_ok", False),
+            "windup_trim_ok2": info2.get("windup_trim_ok", False),
+        }
 
     feat1 = extractDTWFeatures(kpts1)
     feat2 = extractDTWFeatures(kpts2)
@@ -179,6 +195,7 @@ def loadAndAlignPitchPair(kpts1_path, kpts2_path, trim_delivery=True):
         "glove2": glove2,
         "video_frames2": vf2,
         "path": path,
+        **windup_meta,
     }
 
 
@@ -329,6 +346,16 @@ CROP_COVERAGE_THRESHOLD = 0.80
 PERCENTILE_LO = 5
 PERCENTILE_HI = 95
 TORSO_OUTLIER_RATIO = 2.5
+
+def trimToWindupWindow(kpts, glove):
+    """Trim sequence to [0, windup_end) for tipping DTW alignment."""
+    if len(kpts) == 0:
+        return kpts, glove
+    trimmed, info = trimToWindupOnly(kpts)
+    end = info.get("windup_end")
+    if end is None or end >= len(kpts):
+        return kpts, glove
+    return trimmed, glove[:end]
 
 def trimToDeliveryWindow(kpts, glove, pre=DELIVERY_PRE_FRAMES, post=DELIVERY_POST_FRAMES):
     """
@@ -626,9 +653,9 @@ def visualizeDifferences(
         kpts2 = np.array(kpts2)[valid_idx2]
         glove2 = glove2[valid_idx2]
 
-    ### TRIM TO DELIVERY WINDOW (phase-normalize before DTW)
-    kpts1, glove1 = trimToDeliveryWindow(kpts1, glove1)
-    kpts2, glove2 = trimToDeliveryWindow(kpts2, glove2)
+    ### TRIM TO WINDUP-ONLY WINDOW (phase-normalize before DTW)
+    kpts1, glove1 = trimToWindupWindow(kpts1, glove1)
+    kpts2, glove2 = trimToWindupWindow(kpts2, glove2)
     
     ### DETERMINE NORMALIZATION
     width, height, fps, frames_bg = 1080, 1920, 30, []
