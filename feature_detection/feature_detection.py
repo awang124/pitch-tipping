@@ -64,6 +64,7 @@ RIGHT_WRIST   = 16
 LEFT_HIP      = 23
 RIGHT_HIP     = 24
 LEFT_KNEE     = 25
+RIGHT_KNEE    = 26
 LEFT_ANKLE    = 27
 RIGHT_ANKLE   = 28
 
@@ -300,39 +301,240 @@ def find_max_er_frame(all_features: list) -> int:
 # Drawing helpers
 # ─────────────────────────────────────────────
 
+def drawing_scale(img_w: int, img_h: int) -> tuple:
+    ref      = 1280
+    s        = (img_w + img_h) / 2 / ref
+    line_t   = max(3, int(round(6 * s)))
+    circle_r = max(5, int(round(8 * s)))
+    font_s   = max(0.4, round(0.7 * s, 2))
+    font_t   = 1  # unused, draw_label handles thickness
+    return line_t, circle_r, font_s, font_t
+
+
+def draw_label(frame, text, pos, fs, color):
+    """Draw text with a dark shadow pass for pseudo 1.5 thickness."""
+    lx, ly = pos
+    shadow = tuple(max(0, c // 3) for c in color)
+    cv2.putText(frame, text, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, fs, shadow, 2, cv2.LINE_AA)
+    cv2.putText(frame, text, (lx, ly), cv2.FONT_HERSHEY_SIMPLEX, fs, color,  1, cv2.LINE_AA)
+
+
 def draw_skeleton(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
-    """Draw skeleton connections and numbered landmark dots onto frame in-place."""
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
     pts = [(int(lm.x * img_w), int(lm.y * img_h)) for lm in landmarks]
     for a, b in POSE_CONNECTIONS:
         if landmarks[a].visibility > 0.3 and landmarks[b].visibility > 0.3:
-            cv2.line(frame, pts[a], pts[b], (0, 200, 255), 2, cv2.LINE_AA)
+            cv2.line(frame, pts[a], pts[b], (0, 200, 255), lt, cv2.LINE_AA)
     for idx, (px, py) in enumerate(pts):
         if landmarks[idx].visibility > 0.3:
-            cv2.circle(frame, (px, py), 4, (255, 80, 80), -1, cv2.LINE_AA)
-            cv2.putText(frame, str(idx), (px + 4, py - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.30, (255, 255, 0), 1)
+            cv2.circle(frame, (px, py), cr, (255, 80, 80), -1, cv2.LINE_AA)
+            draw_label(frame, str(idx), (px + 4, py - 4), fs * 0.5, (255, 255, 0))
+
 
 def draw_glove_height_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
     l_hp = landmarks[LEFT_HIP]
     r_hp = landmarks[RIGHT_HIP]
     l_wr = landmarks[LEFT_WRIST]
 
     hp_mid_px = (int((l_hp.x + r_hp.x) / 2 * img_w),
                  int((l_hp.y + r_hp.y) / 2 * img_h))
-    wr_px     = (int(l_wr.x * img_w), int(l_wr.y * img_h))
+    wr_px = (int(l_wr.x * img_w), int(l_wr.y * img_h))
+    hip_height_pt = (wr_px[0], hp_mid_px[1])
 
-    # vertical purple line from hip height down/up to glove wrist
-    cv2.line(frame, (wr_px[0], hp_mid_px[1]), wr_px, (0, 255, 0), 2, cv2.LINE_AA)
+    cv2.line(frame, hip_height_pt, wr_px, (0, 255, 0), lt, cv2.LINE_AA)
+    cv2.circle(frame, hip_height_pt, cr, (0, 255, 0), -1)
+    cv2.circle(frame, wr_px, cr, (0, 255, 0), -1)
 
-    # dot at each endpoint
-    cv2.circle(frame, (wr_px[0], hp_mid_px[1]), 5, (0, 255, 0), -1)
-    cv2.circle(frame, wr_px, 5, (0, 255, 0), -1)
-
-    # label
     glove_above_hip = hp_mid_px[1] - wr_px[1]
-    cv2.putText(frame, f"glove_above_hip: {glove_above_hip}px", (hp_mid_px[0] + 0, hp_mid_px[1] + 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 1, cv2.LINE_AA)
+    label = f"glove_above_hip: {glove_above_hip}px"
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+    lx = max(4, hip_height_pt[0] - tw - 20)        # LEFT of the point
+    ly = hip_height_pt[1] - 10
+    cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+    draw_label(frame, label, (lx, ly), fs, (0, 255, 0))
 
+
+def draw_elbow_dist_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+    l_eb = landmarks[LEFT_ELBOW]
+    r_eb = landmarks[RIGHT_ELBOW]
+
+    ebl_px = (int(l_eb.x * img_w), int(l_eb.y * img_h))
+    ebr_px = (int(r_eb.x * img_w), int(r_eb.y * img_h))
+
+    cv2.line(frame, ebl_px, ebr_px, (255, 0, 255), lt, cv2.LINE_AA)
+    cv2.circle(frame, ebl_px, cr, (255, 0, 255), -1)
+    cv2.circle(frame, ebr_px, cr, (255, 0, 255), -1)
+
+    elbow_dist = int(normalised_distance(np.array(ebl_px), np.array(ebr_px)))
+    label = f"elbow_dist: {elbow_dist}px"
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+    left_eb = ebl_px if ebl_px[0] <= ebr_px[0] else ebr_px
+    lx = max(4, left_eb[0] - tw - 20)
+    ly = left_eb[1]
+    cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+    draw_label(frame, label, (lx, ly), fs, (255, 0, 255))
+
+
+def draw_arm_angle_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+
+    for sh_idx, eb_idx, wr_idx, color, prefix in [
+        (LEFT_SHOULDER,  LEFT_ELBOW,  LEFT_WRIST,  (0, 165, 255), "L"),
+        (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST, (255, 165,   0), "R"),
+    ]:
+        if (landmarks[sh_idx].visibility < 0.3 or
+                landmarks[eb_idx].visibility < 0.3 or
+                landmarks[wr_idx].visibility < 0.3):
+            continue
+
+        sh_px = (int(landmarks[sh_idx].x * img_w), int(landmarks[sh_idx].y * img_h))
+        eb_px = (int(landmarks[eb_idx].x * img_w), int(landmarks[eb_idx].y * img_h))
+        wr_px = (int(landmarks[wr_idx].x * img_w), int(landmarks[wr_idx].y * img_h))
+
+        cv2.line(frame, sh_px, eb_px, color, lt, cv2.LINE_AA)
+        cv2.line(frame, eb_px, wr_px, color, lt, cv2.LINE_AA)
+        cv2.circle(frame, sh_px, cr, color, -1)
+        cv2.circle(frame, eb_px, cr, color, -1)
+        cv2.circle(frame, wr_px, cr, color, -1)
+
+        v1 = np.array(sh_px) - np.array(eb_px)
+        v2 = np.array(wr_px) - np.array(eb_px)
+        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+        angle = int(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+        label = f"{prefix}_arm_angle: {angle}deg"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+        lx = max(4, min(eb_px[0] + 20, img_w - tw - 8))
+        ly = eb_px[1]
+        cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+        draw_label(frame, label, (lx, ly), fs, color)
+
+
+def draw_wrist_distance_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+    l_wr = landmarks[LEFT_WRIST]
+    r_wr = landmarks[RIGHT_WRIST]
+
+    wrl_px = (int(l_wr.x * img_w), int(l_wr.y * img_h))
+    wrr_px = (int(r_wr.x * img_w), int(r_wr.y * img_h))
+
+    cv2.line(frame, wrl_px, wrr_px, (0, 255, 255), lt, cv2.LINE_AA)
+    cv2.circle(frame, wrl_px, cr, (0, 255, 255), -1)
+    cv2.circle(frame, wrr_px, cr, (0, 255, 255), -1)
+
+    wrist_dist = int(normalised_distance(np.array(wrl_px), np.array(wrr_px)))
+    label = f"wrist_dist: {wrist_dist}px"
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+    left_px = wrl_px if wrl_px[0] <= wrr_px[0] else wrr_px
+    lx = max(4, left_px[0] - tw - 20)
+    ly = left_px[1]
+    cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+    draw_label(frame, label, (lx, ly), fs, (0, 255, 255))
+
+
+def draw_shoulder_angle_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+
+    l_sh = landmarks[LEFT_SHOULDER]
+    r_sh = landmarks[RIGHT_SHOULDER]
+
+    lsh_px = (int(l_sh.x * img_w), int(l_sh.y * img_h))
+    rsh_px = (int(r_sh.x * img_w), int(r_sh.y * img_h))
+
+    cv2.line(frame, lsh_px, rsh_px, (0, 200, 150), lt, cv2.LINE_AA)
+    cv2.circle(frame, lsh_px, cr, (0, 200, 150), -1)
+    cv2.circle(frame, rsh_px, cr, (0, 200, 150), -1)
+
+    if lsh_px[0] < rsh_px[0]:
+        angle = vector_angle_from_horizontal(
+            np.array([l_sh.x, l_sh.y]),
+            np.array([r_sh.x, r_sh.y])
+        )
+    else:
+        angle = vector_angle_from_horizontal(
+            np.array([r_sh.x, r_sh.y]),
+            np.array([l_sh.x, l_sh.y])
+        )
+
+    label = f"shoulder_angle: {angle:.1f}deg"
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+    right_px = rsh_px if rsh_px[0] >= lsh_px[0] else lsh_px
+    lx = max(4, min(right_px[0] + 20, img_w - tw - 8))
+    ly = right_px[1]
+    cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+    draw_label(frame, label, (lx, ly), fs, (0, 200, 150))
+
+def draw_leg_angle_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+
+    for hp_idx, kn_idx, an_idx, color, prefix, label_side in [
+        (RIGHT_HIP, 26, RIGHT_ANKLE, (255, 255, 0),   "R", "right"),  # cyan, right of knee
+        (LEFT_HIP,  LEFT_KNEE, LEFT_ANKLE, (100, 100, 255), "L", "left"),   # blue, left of knee
+    ]:
+        if (landmarks[hp_idx].visibility < 0.3 or
+                landmarks[kn_idx].visibility < 0.3 or
+                landmarks[an_idx].visibility < 0.3):
+            continue
+
+        hp_px = (int(landmarks[hp_idx].x * img_w), int(landmarks[hp_idx].y * img_h))
+        kn_px = (int(landmarks[kn_idx].x * img_w), int(landmarks[kn_idx].y * img_h))
+        an_px = (int(landmarks[an_idx].x * img_w), int(landmarks[an_idx].y * img_h))
+
+        cv2.line(frame, hp_px, kn_px, color, lt, cv2.LINE_AA)
+        cv2.line(frame, kn_px, an_px, color, lt, cv2.LINE_AA)
+        cv2.circle(frame, hp_px, cr, color, -1)
+        cv2.circle(frame, kn_px, cr, color, -1)
+        cv2.circle(frame, an_px, cr, color, -1)
+
+        v1 = np.array(hp_px) - np.array(kn_px)
+        v2 = np.array(an_px) - np.array(kn_px)
+        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+        angle = int(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+        label = f"{prefix}_leg_angle: {angle}deg"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+
+        if prefix == "L":
+            # midpoint of calf (knee -> ankle)
+            calf_mid = ((kn_px[0] + an_px[0]) // 2, (kn_px[1] + an_px[1]) // 2)
+            lx = max(4, calf_mid[0] - tw - 20)
+            ly = calf_mid[1]
+        else:
+            lx = max(4, min(kn_px[0] + 20, img_w - tw - 8))
+            ly = kn_px[1]
+
+        cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+        draw_label(frame, label, (lx, ly), fs, color)
+
+
+def draw_feet_distance_indicator(frame: np.ndarray, landmarks: list, img_w: int, img_h: int):
+    lt, cr, fs, ft = drawing_scale(img_w, img_h)
+
+    l_heel = landmarks[29]  # LEFT_HEEL
+    r_heel = landmarks[30]  # RIGHT_HEEL
+
+    if l_heel.visibility < 0.3 or r_heel.visibility < 0.3:
+        return
+
+    lf_px = (int(l_heel.x * img_w), int(l_heel.y * img_h))
+    rf_px = (int(r_heel.x * img_w), int(r_heel.y * img_h))
+
+    cv2.line(frame, lf_px, rf_px, (200, 100, 255), lt, cv2.LINE_AA)
+    cv2.circle(frame, lf_px, cr, (200, 100, 255), -1)
+    cv2.circle(frame, rf_px, cr, (200, 100, 255), -1)
+
+    feet_dist = int(normalised_distance(np.array(lf_px), np.array(rf_px)))
+    label = f"feet_dist: {feet_dist}px"
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+
+    # left of whichever heel is rightmost on screen (right foot from viewer's POV)
+    right_heel = rf_px if rf_px[0] >= lf_px[0] else lf_px
+    lx = max(4, right_heel[0] - tw - 20)
+    ly = right_heel[1]
+    cv2.rectangle(frame, (lx - 4, ly - th - 5), (lx + tw + 4, ly + 5), (0, 0, 0), -1)
+    draw_label(frame, label, (lx, ly), fs, (200, 100, 255))
 
 def draw_feature_text(frame: np.ndarray, features: PitchFeatures,
                       is_in_window: bool = True,
@@ -413,17 +615,24 @@ def process_image(path: str, model_path: str,
     all_features = []
     sorted_poses = sort_poses_left_to_right(result.pose_landmarks)
     for person_idx, landmarks in enumerate(sorted_poses):
-        draw_skeleton(annotated, landmarks, w, h)
+        # draw_skeleton(annotated, landmarks, w, h)
         draw_glove_height_indicator(annotated, landmarks, w, h)
+        draw_elbow_dist_indicator(annotated, landmarks, w, h)
+        draw_arm_angle_indicator(annotated, landmarks, w, h)
+        draw_wrist_distance_indicator(annotated, landmarks, w, h)
+        draw_shoulder_angle_indicator(annotated, landmarks, w, h)
+        draw_leg_angle_indicator(annotated, landmarks, w, h)
+        draw_feet_distance_indicator(annotated, landmarks, w, h)
+
         features = extract_features(landmarks, person_idx)
         anchor = "top_right" if person_idx == 1 else "top_left"
-        annotated = draw_feature_text(annotated, features, is_in_window=True, anchor=anchor)
+        # annotated = draw_feature_text(annotated, features, is_in_window=True, anchor=anchor)
         all_features.append([features])
 
-    out = output_path or path.replace(".", "_annotated.")
+    out = output_path or os.path.splitext(path)[0] + "_annotated.png"
     cv2.imwrite(out, annotated)
     print(f"Annotated image saved -> {out}")
-    print(all_features)
+    # print(all_features)
     return all_features
 
 
@@ -502,11 +711,13 @@ def process_video(path: str, model_path: str,
         if lms is not None:
             draw_skeleton(annotated, lms, w, h)
         if features is not None:
-            annotated = draw_feature_text(annotated, features, is_in_window=in_window)
+            features_annotated = draw_feature_text(annotated, features, is_in_window=in_window)
             if in_window:
                 collected.append(features)
-
-        writer.write(annotated)
+        
+        # writer.write(annotated)
+        # features annotated in a box
+        writer.write(features_annotated)
 
         if i % 30 == 0:
             print(f"  Writing... {i}/{total} ({i/max(total,1)*100:.0f}%)")
